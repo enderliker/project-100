@@ -34,6 +34,19 @@ for var in "${required_env[@]}"; do
   fi
 done
 
+if [[ "$SERVICE_MODE" == "bot" ]]; then
+  bot_env=(
+    "DISCORD_TOKEN"
+    "DISCORD_APP_ID"
+  )
+  for var in "${bot_env[@]}"; do
+    if [[ -z "${!var:-}" ]]; then
+      echo "Missing required environment variable: $var"
+      exit 1
+    fi
+  done
+fi
+
 if [[ -d .git ]]; then
   git fetch --all --prune
   git pull --ff-only
