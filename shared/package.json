@@ -9,5 +9,8 @@
   "dependencies": {
     "ioredis": "^5.4.1",
     "pg": "^8.11.5"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.6"
   }
 }
