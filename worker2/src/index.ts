@@ -49,7 +49,7 @@ async function ensureTable(): Promise<void> {
 }
 
 async function markIdempotent(redis: RedisClient, key: string, ttlSeconds: number): Promise<boolean> {
-  const result = await redis.set(key, "1", { NX: true, EX: ttlSeconds });
+  const result = await redis.set(key, "1", "EX", ttlSeconds, "NX");
   return result === "OK";
 }
 
