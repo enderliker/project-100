@@ -91,7 +91,7 @@ export function createRedisClient(): RedisClient {
     console.warn("[redis] connection closed");
   });
 
-  client.on("reconnecting", (time) => {
+  client.on("reconnecting", (time: number) => {
     console.warn(`[redis] reconnecting in ${time}ms`);
   });
 
