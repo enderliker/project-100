@@ -11,6 +11,9 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean"
   },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
   "devDependencies": {
     "typescript": "^5.4.5"
   }
