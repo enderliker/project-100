@@ -178,8 +178,14 @@ async function main(): Promise<void> {
   });
 
   registerGracefulShutdown([
-    () => server.close(),
-    () => healthServer.close(),
+    () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+    () =>
+      new Promise<void>((resolve) => {
+        healthServer.close(() => resolve());
+      }),
     async () => {
       await redis.quit();
     }
