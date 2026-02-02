@@ -57,6 +57,24 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getRedisStartupErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Unknown Redis startup error";
+}
+
+function logRedisStartupFailure(error: unknown): void {
+  const message = getRedisStartupErrorMessage(error);
+  if (message.includes("WRONGPASS")) {
+    console.error(
+      "[redis] authentication failed (WRONGPASS). Check REDIS_USERNAME/REDIS_PASSWORD."
+    );
+    return;
+  }
+  console.error(`[redis] startup failed: ${message}`);
+}
+
 async function main(): Promise<void> {
   for (const env of REQUIRED_ENV) {
     getRequiredEnv(env);
@@ -72,6 +90,13 @@ async function main(): Promise<void> {
 
   const redis = createRedisClient();
   const pool = createPostgresPool();
+  try {
+    await redis.connect();
+    await redis.ping();
+  } catch (error) {
+    logRedisStartupFailure(error);
+    process.exit(1);
+  }
 
   let running = true;
 

@@ -50,6 +50,24 @@ function getClientIp(req: http.IncomingMessage): string {
   return req.socket.remoteAddress ?? "unknown";
 }
 
+function getRedisStartupErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Unknown Redis startup error";
+}
+
+function logRedisStartupFailure(error: unknown): void {
+  const message = getRedisStartupErrorMessage(error);
+  if (message.includes("WRONGPASS")) {
+    console.error(
+      "[redis] authentication failed (WRONGPASS). Check REDIS_USERNAME/REDIS_PASSWORD."
+    );
+    return;
+  }
+  console.error(`[redis] startup failed: ${message}`);
+}
+
 function parsePayload(body: string): {
   type: string;
   payload: Record<string, unknown>;
@@ -92,6 +110,13 @@ async function main(): Promise<void> {
   getDiscordAppId();
 
   const redis = createRedisClient();
+  try {
+    await redis.connect();
+    await redis.ping();
+  } catch (error) {
+    logRedisStartupFailure(error);
+    process.exit(1);
+  }
 
   const server = http.createServer(async (req, res) => {
     if (!req.url || req.method !== "POST" || req.url !== "/command") {
