@@ -32,7 +32,7 @@ This monorepo provides a production-ready distributed system with a bot/gateway 
 
 The entrypoint script performs the following in strict order:
 1. Loads `.env`
-2. Validates required environment variables
+2. Validates required environment variables (including `DISCORD_TOKEN` and `DISCORD_APP_ID` for `SERVICE_MODE=bot`)
 3. Optionally updates the repo via `git fetch` + `git pull --ff-only`
 4. Installs dependencies deterministically
 5. Builds all workspaces

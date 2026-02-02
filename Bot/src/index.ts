@@ -10,7 +10,13 @@ import {
   registerGracefulShutdown
 } from "@project/shared";
 
-const REQUIRED_ENV = ["BOT_PORT", "BOT_RATE_LIMIT", "BOT_RATE_WINDOW_SEC"];
+const REQUIRED_ENV = [
+  "BOT_PORT",
+  "BOT_RATE_LIMIT",
+  "BOT_RATE_WINDOW_SEC",
+  "DISCORD_TOKEN",
+  "DISCORD_APP_ID"
+];
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -24,6 +30,14 @@ function parseNumber(name: string): number {
   const value = Number(getRequiredEnv(name));
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${name} must be a positive number`);
+  }
+  return value;
+}
+
+function getDiscordAppId(): string {
+  const value = getRequiredEnv("DISCORD_APP_ID");
+  if (!/^\d+$/.test(value)) {
+    throw new Error("DISCORD_APP_ID must be a numeric Discord application id");
   }
   return value;
 }
@@ -75,6 +89,7 @@ async function main(): Promise<void> {
   const rateWindow = parseNumber("BOT_RATE_WINDOW_SEC");
   const queueName = process.env.BOT_QUEUE_NAME ?? "jobs:main";
   const maxLoad = process.env.BOT_MAX_LOAD1 ? Number(process.env.BOT_MAX_LOAD1) : null;
+  getDiscordAppId();
 
   const redis = createRedisClient();
 
