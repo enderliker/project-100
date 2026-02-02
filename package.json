@@ -1,0 +1,17 @@
+{
+  "name": "project-100",
+  "private": true,
+  "workspaces": [
+    "Bot",
+    "worker",
+    "worker2",
+    "shared"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
