@@ -8,9 +8,10 @@ import {
   requeueJob,
   sendToDeadLetter,
   runGitUpdateOnce,
-  startHealthChecker,
   startHealthServer,
-  createLogger
+  createLogger,
+  checkRemoteService,
+  normalizeStatusCheckOptions
 } from "@project/shared";
 import { RedisClient } from "@project/shared";
 
@@ -22,7 +23,6 @@ const REQUIRED_ENV = [
   "WORKER_BACKOFF_BASE_MS",
   "HEALTH_HOST",
   "HEALTH_PORT",
-  "WORKER_BOT_HEALTH_URL",
   "HEALTH_CHECK_INTERVAL_MS",
   "HEALTH_CHECK_TIMEOUT_MS",
   "GIT_REPO_PATH",
@@ -50,6 +50,18 @@ function parseNumber(name: string): number {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${name} must be a positive number`);
+  }
+  return value;
+}
+
+function parseOptionalNumber(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw) {
+    return null;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number when set`);
   }
   return value;
 }
@@ -142,9 +154,9 @@ async function main(): Promise<void> {
   let baseBackoffMs: number;
   let healthHost: string;
   let healthPort: number;
-  let botHealthUrl: string;
-  let checkerIntervalMs: number;
-  let checkerTimeoutMs: number;
+  let botHealthUrl: string | null;
+  let statusCheckTimeoutMs: number;
+  let statusCheckRetries: number;
   let gitRepoPath: string;
   let gitRemote: string;
   let gitBranch: string;
@@ -167,12 +179,15 @@ async function main(): Promise<void> {
     baseBackoffMs = parseNumber("WORKER_BACKOFF_BASE_MS");
     healthHost = getRequiredEnv("HEALTH_HOST");
     healthPort = parseNumber("HEALTH_PORT");
-    botHealthUrl = getRequiredEnv("WORKER_BOT_HEALTH_URL");
-    checkerIntervalMs = parseNumber("HEALTH_CHECK_INTERVAL_MS");
-    checkerTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
+    botHealthUrl =
+      process.env.BOT_HEALTH_URL ?? process.env.WORKER_BOT_HEALTH_URL ?? null;
+    parseNumber("HEALTH_CHECK_INTERVAL_MS");
+    parseNumber("HEALTH_CHECK_TIMEOUT_MS");
     gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
     gitRemote = getRequiredEnv("GIT_REMOTE");
     gitBranch = getRequiredEnv("GIT_BRANCH");
+    statusCheckTimeoutMs = parseOptionalNumber("STATUS_CHECK_TIMEOUT_MS") ?? 1500;
+    statusCheckRetries = parseOptionalNumber("STATUS_CHECK_RETRIES") ?? 1;
   } catch (error) {
     exitWithConfigError(error);
   }
@@ -214,11 +229,27 @@ async function main(): Promise<void> {
     healthLogger.info(`server listening host=${healthHost} port=${healthPort}`);
   });
 
-  const checkerUrls = [botHealthUrl];
-  const checkerTimer = startHealthChecker("worker", checkerUrls, {
-    intervalMs: checkerIntervalMs,
-    timeoutMs: checkerTimeoutMs
-  });
+  if (botHealthUrl) {
+    const statusOptions = normalizeStatusCheckOptions({
+      timeoutMs: statusCheckTimeoutMs,
+      retries: statusCheckRetries
+    });
+    try {
+      const result = await checkRemoteService(botHealthUrl, statusOptions);
+      const latency =
+        result.latencyMs === undefined ? "n/a" : `${Math.round(result.latencyMs)}ms`;
+      if (result.status === "up") {
+        healthLogger.info(`bot health check status=up latency=${latency}`);
+      } else {
+        const reason = result.reason ?? "unreachable";
+        healthLogger.warn(
+          `bot health check status=down reason=${reason} latency=${latency}`
+        );
+      }
+    } catch (error) {
+      healthLogger.warn("bot health check failed");
+    }
+  }
 
   let running = true;
 
@@ -266,11 +297,6 @@ async function main(): Promise<void> {
   registerGracefulShutdown([
     () => {
       running = false;
-    },
-    () => {
-      if (checkerTimer) {
-        clearInterval(checkerTimer);
-      }
     },
     () =>
       new Promise<void>((resolve) => {
