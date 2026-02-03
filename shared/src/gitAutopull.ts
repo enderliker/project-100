@@ -25,8 +25,8 @@ export interface GitAutopullResult {
   status: GitAutopullStatus;
 }
 
-let autoPullPromise: Promise<GitAutopullResult> | null = null;
-let autoPullResult: GitAutopullResult | null = null;
+let updatePromise: Promise<GitAutopullResult> | null = null;
+let updateResult: GitAutopullResult | null = null;
 
 async function runGit(args: string[], cwd: string): Promise<string> {
   const { stdout } = await execFileAsync("git", args, { cwd });
@@ -42,24 +42,23 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
-async function hasTrackedChanges(repoRoot: string): Promise<boolean> {
-  const status = await runGit(["status", "--porcelain", "--untracked-files=no"], repoRoot);
-  return status.length > 0;
+async function getLocalStatus(repoRoot: string): Promise<string> {
+  return runGit(["status", "--porcelain"], repoRoot);
 }
 
-async function runAutopull(options: GitAutopullOptions): Promise<GitAutopullResult> {
+async function runUpdate(options: GitAutopullOptions): Promise<GitAutopullResult> {
   const repoRoot = path.resolve(process.cwd(), options.repoPath);
   const gitDir = path.join(repoRoot, ".git");
 
   const hasGit = await pathExists(gitDir);
   if (!hasGit) {
-    logger.warn("no repo detected, skipping");
+    logger.error("error: repo not detected");
     return { status: "no_repo" };
   }
 
   logger.info("repo detected");
   try {
-    logger.info(`fetching ${options.remote}/${options.branch}`);
+    logger.info(`fetch ${options.remote}/${options.branch}`);
     await runGit(["fetch", options.remote, options.branch], repoRoot);
 
     const revList = await runGit(
@@ -73,48 +72,79 @@ async function runAutopull(options: GitAutopullOptions): Promise<GitAutopullResu
     const behind = Number.isFinite(behindParsed) ? behindParsed : 0;
 
     if (behind === 0 && ahead === 0) {
-      logger.info("repo up to date");
+      logger.info("up to date");
       return { status: "up_to_date" };
     }
 
     if (behind === 0) {
-      logger.info("repo up to date");
+      logger.info("up to date");
       return { status: "up_to_date" };
     }
+    const status = await getLocalStatus(repoRoot);
+    const hasLocalChanges = status.length > 0;
+    let stashCreated = false;
 
-    if (await hasTrackedChanges(repoRoot)) {
-      logger.warn("local changes detected, skipping fast-forward");
+    if (hasLocalChanges) {
+      logger.warn("local changes detected (stashing before update)");
+      await runGit(
+        ["stash", "push", "--include-untracked", "--message", "autoupdate"],
+        repoRoot
+      );
+      stashCreated = true;
+    }
+
+    try {
+      await runGit(["merge", "--ff-only", `${options.remote}/${options.branch}`], repoRoot);
+    } catch (error) {
+      if (stashCreated) {
+        try {
+          await runGit(["stash", "apply"], repoRoot);
+        } catch {
+          logger.error("error: stash apply failed after update failure");
+        }
+      }
+      const message = error instanceof Error ? error.message : "update failed";
+      logger.error(`error: ${message}`);
+      return { status: "failed" };
+    }
+
+    logger.info("update applied");
+
+    if (stashCreated) {
+      try {
+        await runGit(["stash", "apply"], repoRoot);
+        await runGit(["stash", "drop"], repoRoot);
+      } catch {
+        // Keep running on the updated tree if stash apply fails.
+        logger.error("error: stash apply failed; resolve manually");
+      }
       return { status: "local_changes" };
     }
 
-    await runGit(["merge", "--ff-only", `${options.remote}/${options.branch}`], repoRoot);
-    logger.info("fast-forward applied");
     return { status: "fast_forward" };
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "update failed";
+    logger.error(`error: ${message}`);
     return { status: "failed" };
   }
 }
 
-export async function runGitAutopullOnceOnStartup(
+export async function runGitUpdateOnce(
   options: GitAutopullOptions
 ): Promise<GitAutopullResult> {
-  if (autoPullResult) {
-    logger.warn("autopull already executed, skipping");
-    return autoPullResult;
+  if (updateResult) {
+    logger.warn("update already executed, skipping");
+    return updateResult;
   }
 
-  if (!autoPullPromise) {
-    autoPullPromise = (async () => {
-      const result = await runAutopull(options);
-      logger.info("autopull executed on startup");
-      return result;
-    })();
+  if (!updatePromise) {
+    updatePromise = (async () => runUpdate(options))();
   }
 
   try {
-    autoPullResult = await autoPullPromise;
-    return autoPullResult;
+    updateResult = await updatePromise;
+    return updateResult;
   } finally {
-    autoPullPromise = null;
+    updatePromise = null;
   }
 }

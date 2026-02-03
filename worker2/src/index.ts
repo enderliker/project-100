@@ -6,7 +6,7 @@ import {
   registerGracefulShutdown,
   requeueJob,
   sendToDeadLetter,
-  runGitAutopullOnceOnStartup,
+  runGitUpdateOnce,
   startHealthChecker,
   startHealthServer,
   createLogger
@@ -27,7 +27,6 @@ const REQUIRED_ENV = [
   "GIT_REPO_PATH",
   "GIT_REMOTE",
   "GIT_BRANCH",
-  "GIT_AUTOPULL_INTERVAL_MS",
   "PG_QUERY_MAX_RETRIES",
   "PG_QUERY_BASE_DELAY_MS",
   "PG_QUERY_MAX_DELAY_MS"
@@ -174,7 +173,6 @@ async function main(): Promise<void> {
     gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
     gitRemote = getRequiredEnv("GIT_REMOTE");
     gitBranch = getRequiredEnv("GIT_BRANCH");
-    parseNumber("GIT_AUTOPULL_INTERVAL_MS");
   } catch (error) {
     exitWithConfigError(error);
   }
@@ -189,7 +187,7 @@ async function main(): Promise<void> {
 
   startupLogger.info("config validated");
 
-  await runGitAutopullOnceOnStartup({
+  await runGitUpdateOnce({
     repoPath: gitRepoPath,
     remote: gitRemote,
     branch: gitBranch
