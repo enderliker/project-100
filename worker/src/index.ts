@@ -2,6 +2,7 @@ import {
   createPostgresPool,
   createRedisClient,
   dequeueJob,
+  parsePgQueryMaxRetries,
   queryPrepared,
   registerGracefulShutdown,
   requeueJob,
@@ -27,7 +28,6 @@ const REQUIRED_ENV = [
   "GIT_REPO_PATH",
   "GIT_REMOTE",
   "GIT_BRANCH",
-  "PG_QUERY_MAX_RETRIES",
   "PG_QUERY_BASE_DELAY_MS",
   "PG_QUERY_MAX_DELAY_MS"
 ];
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     }
 
     queryOptions = {
-      maxRetries: parseNumber("PG_QUERY_MAX_RETRIES"),
+      maxRetries: parsePgQueryMaxRetries(startupLogger),
       baseDelayMs: parseNumber("PG_QUERY_BASE_DELAY_MS"),
       maxDelayMs: parseNumber("PG_QUERY_MAX_DELAY_MS")
     };

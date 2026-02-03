@@ -1,5 +1,6 @@
 import fs from "fs";
 import { Pool, QueryResult } from "pg";
+import { Logger } from "./logger";
 
 export interface PreparedQuery {
   name: string;
@@ -16,10 +17,11 @@ const REQUIRED_ENV = [
   "PG_POOL_MAX",
   "PG_IDLE_TIMEOUT_MS",
   "PG_SSL_REJECT_UNAUTHORIZED",
-  "PG_QUERY_MAX_RETRIES",
   "PG_QUERY_BASE_DELAY_MS",
   "PG_QUERY_MAX_DELAY_MS"
 ];
+
+const UNLIMITED_RETRIES = Infinity;
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -64,6 +66,39 @@ function buildSslConfig(): { rejectUnauthorized: boolean; ca?: string } {
     return { rejectUnauthorized, ca };
   }
   return { rejectUnauthorized };
+}
+
+export function parsePgQueryMaxRetries(logger: Logger): number {
+  const raw = process.env.PG_QUERY_MAX_RETRIES;
+  if (raw === undefined) {
+    logger.info(
+      "[config] PG_QUERY_MAX_RETRIES not set; using unlimited retries"
+    );
+    return UNLIMITED_RETRIES;
+  }
+
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === "unlimited" ||
+    lower === "infinite" ||
+    lower === "infinity" ||
+    trimmed === "-1"
+  ) {
+    logger.info("[config] PG_QUERY_MAX_RETRIES set to unlimited");
+    return UNLIMITED_RETRIES;
+  }
+
+  const value = Number(trimmed);
+  if (!Number.isInteger(value) || value <= 0) {
+    logger.info(
+      `[config] PG_QUERY_MAX_RETRIES invalid ('${raw}'); falling back to unlimited retries`
+    );
+    return UNLIMITED_RETRIES;
+  }
+
+  logger.info(`[config] PG_QUERY_MAX_RETRIES=${value}`);
+  return value;
 }
 
 export function createPostgresPool(): Pool {
@@ -128,7 +163,8 @@ export async function queryPrepared(
   }
 
   const { maxRetries, baseDelayMs, maxDelayMs } = options;
-  if (!Number.isInteger(maxRetries) || maxRetries <= 0) {
+  const isUnlimitedRetries = maxRetries === UNLIMITED_RETRIES;
+  if (!isUnlimitedRetries && (!Number.isInteger(maxRetries) || maxRetries <= 0)) {
     throw new Error("PG_QUERY_MAX_RETRIES must be a positive integer");
   }
   if (!Number.isInteger(baseDelayMs) || baseDelayMs <= 0) {
