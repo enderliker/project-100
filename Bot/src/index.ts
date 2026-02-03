@@ -5,7 +5,6 @@ import path from "path";
 import {
   Client,
   GatewayIntentBits,
-  Interaction,
   REST,
   Routes,
   SlashCommandBuilder
@@ -18,10 +17,11 @@ import {
   rateLimit,
   registerGracefulShutdown,
   runGitUpdateOnce,
-  startHealthChecker,
   startHealthServer,
   createLogger
 } from "@project/shared";
+import { execFileSync } from "child_process";
+import { buildStatusEmbed, fetchStatusSnapshot } from "./status";
 
 const REQUIRED_ENV = [
   "BOT_PORT",
@@ -177,7 +177,7 @@ function parsePayload(body: string): {
   };
 }
 
-function loadVersion(): string | null {
+function loadPackageVersion(): string | null {
   try {
     const pkgPath = path.resolve(process.cwd(), "package.json");
     const raw = fs.readFileSync(pkgPath, "utf-8");
@@ -188,31 +188,29 @@ function loadVersion(): string | null {
   }
 }
 
-function formatUptime(seconds: number): string {
-  const rounded = Math.max(0, Math.floor(seconds));
-  const hours = Math.floor(rounded / 3600);
-  const minutes = Math.floor((rounded % 3600) / 60);
-  const secs = rounded % 60;
-  return `${hours}h ${minutes}m ${secs}s`;
+function loadGitVersion(repoPath: string): string | null {
+  try {
+    const output = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: repoPath,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const version = output.toString("utf-8").trim();
+    return version.length > 0 ? version : null;
+  } catch {
+    return null;
+  }
 }
 
-function buildStatusMessage(params: {
-  serviceMode: string;
-  uptimeSeconds: number;
-  gatewayPingMs: number;
-  redisConnected: boolean;
-  postgresStatus: string;
-  version: string | null;
-}): string {
-  const lines = [
-    `Service: ${params.serviceMode}`,
-    `Uptime: ${formatUptime(params.uptimeSeconds)}`,
-    `Gateway ping: ${Math.round(params.gatewayPingMs)}ms`,
-    `Redis: ${params.redisConnected ? "connected" : "disconnected"}`,
-    `Postgres: ${params.postgresStatus}`,
-    `Version: ${params.version ?? "unknown"}`
-  ];
-  return lines.join("\n");
+function loadVersionInfo(repoPath: string): string {
+  const gitVersion = loadGitVersion(repoPath);
+  if (gitVersion) {
+    return gitVersion;
+  }
+  const pkgVersion = loadPackageVersion();
+  if (pkgVersion) {
+    return pkgVersion;
+  }
+  return "0.0.0";
 }
 
 async function main(): Promise<void> {
@@ -226,14 +224,15 @@ async function main(): Promise<void> {
   let botHost: string;
   let healthHost: string;
   let healthPort: number;
-  let checkerUrls: string[];
-  let checkerIntervalMs: number;
-  let checkerTimeoutMs: number;
   let gitRepoPath: string;
   let gitRemote: string;
   let gitBranch: string;
   let discordToken: string;
   let discordAppId: string;
+  let workerHealthUrl: string | null;
+  let worker2HealthUrl: string | null;
+  let statusCheckTimeoutMs: number;
+  let statusCheckRetries: number;
 
   try {
     for (const env of REQUIRED_ENV) {
@@ -248,14 +247,18 @@ async function main(): Promise<void> {
     botHost = getRequiredEnv("BOT_HOST");
     healthHost = getRequiredEnv("HEALTH_HOST");
     healthPort = parseNumber("HEALTH_PORT");
-    checkerUrls = parseUrlList("BOT_CHECK_URLS");
-    checkerIntervalMs = parseNumber("HEALTH_CHECK_INTERVAL_MS");
-    checkerTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
+    parseUrlList("BOT_CHECK_URLS");
+    parseNumber("HEALTH_CHECK_INTERVAL_MS");
+    parseNumber("HEALTH_CHECK_TIMEOUT_MS");
     gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
     gitRemote = getRequiredEnv("GIT_REMOTE");
     gitBranch = getRequiredEnv("GIT_BRANCH");
     discordToken = getRequiredEnv("DISCORD_TOKEN");
     discordAppId = getDiscordAppId();
+    workerHealthUrl = process.env.WORKER_HEALTH_URL ?? null;
+    worker2HealthUrl = process.env.WORKER2_HEALTH_URL ?? null;
+    statusCheckTimeoutMs = parseOptionalNumber("STATUS_CHECK_TIMEOUT_MS") ?? 1500;
+    statusCheckRetries = parseOptionalNumber("STATUS_CHECK_RETRIES") ?? 1;
   } catch (error) {
     exitWithConfigError(error);
   }
@@ -355,11 +358,6 @@ async function main(): Promise<void> {
     healthLogger.info(`server listening host=${healthHost} port=${healthPort}`);
   });
 
-  const checkerTimer = startHealthChecker("bot", checkerUrls, {
-    intervalMs: checkerIntervalMs,
-    timeoutMs: checkerTimeoutMs
-  });
-
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   const readyPromise = new Promise<void>((resolve, reject) => {
     client.once("ready", () => {
@@ -378,7 +376,7 @@ async function main(): Promise<void> {
   const rest = new REST({ version: "10" }).setToken(discordToken);
   await rest.put(Routes.applicationCommands(discordAppId), { body: commands });
 
-  client.on("interactionCreate", async (interaction: Interaction) => {
+  client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) {
       return;
     }
@@ -390,16 +388,23 @@ async function main(): Promise<void> {
     }
 
     if (interaction.commandName === "status") {
-      const version = loadVersion();
-      const statusMessage = buildStatusMessage({
-        serviceMode: process.env.SERVICE_MODE ?? "bot",
-        uptimeSeconds: process.uptime(),
-        gatewayPingMs: client.ws.ping,
-        redisConnected: redis.status === "ready",
-        postgresStatus: "not configured",
-        version
+      const version = loadVersionInfo(gitRepoPath);
+      const snapshot = await fetchStatusSnapshot({
+        workerUrl: workerHealthUrl ?? undefined,
+        worker2Url: worker2HealthUrl ?? undefined,
+        timeoutMs: statusCheckTimeoutMs,
+        retries: statusCheckRetries
       });
-      await interaction.reply(statusMessage);
+      const embed = buildStatusEmbed(
+        {
+          serviceMode: process.env.SERVICE_MODE ?? "bot",
+          uptimeSeconds: process.uptime(),
+          redisConnected: redis.status === "ready",
+          version
+        },
+        snapshot
+      );
+      await interaction.reply({ embeds: [embed] });
     }
   });
 
@@ -416,11 +421,6 @@ async function main(): Promise<void> {
       new Promise<void>((resolve) => {
         healthServer.close(() => resolve());
       }),
-    () => {
-      if (checkerTimer) {
-        clearInterval(checkerTimer);
-      }
-    },
     async () => {
       await redis.quit();
     },

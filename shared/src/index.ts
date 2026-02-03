@@ -7,3 +7,4 @@ export * from "./load";
 export * from "./shutdown";
 export * from "./gitAutopull";
 export * from "./logger";
+export * from "./statusCheck";
