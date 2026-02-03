@@ -94,11 +94,16 @@ const runHealthcheck = async () => {
 const installDependencies = async () => {
   log("Installing dependencies...");
   const hasLockfile = fs.existsSync(path.join(ROOT_DIR, "package-lock.json"));
-  if (hasLockfile) {
-    await spawnCommand("npm", ["ci", "--omit=dev"], { cwd: ROOT_DIR });
-    return;
+  const buildRequired = needsBuild();
+  const args = hasLockfile ? ["ci"] : ["install"];
+
+  if (buildRequired) {
+    log("Build required; installing dev dependencies for TypeScript build.");
+  } else {
+    args.push("--omit=dev");
   }
-  await spawnCommand("npm", ["install", "--omit=dev"], { cwd: ROOT_DIR });
+
+  await spawnCommand("npm", args, { cwd: ROOT_DIR });
 };
 
 const getLatestMtime = (dirPath) => {
