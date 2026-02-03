@@ -31,13 +31,9 @@ import {
 } from "./command-handler/registry";
 
 const REQUIRED_ENV = [
-  "BOT_PORT",
   "BOT_RATE_LIMIT",
   "BOT_RATE_WINDOW_SEC",
   "BOT_QUEUE_NAME",
-  "BOT_HOST",
-  "HEALTH_HOST",
-  "HEALTH_PORT",
   "BOT_CHECK_URLS",
   "HEALTH_CHECK_INTERVAL_MS",
   "HEALTH_CHECK_TIMEOUT_MS",
@@ -46,8 +42,8 @@ const REQUIRED_ENV = [
   "GIT_BRANCH",
   "DISCORD_TOKEN",
   "DISCORD_APP_ID",
-  "WORKER_HEALTH_URL",
-  "WORKER2_HEALTH_URL"
+  "WORKER1_URL",
+  "WORKER2_URL"
 ];
 
 const SENSITIVE_ENV = ["DISCORD_TOKEN", "REDIS_PASSWORD", "PG_PASSWORD"];
@@ -138,6 +134,18 @@ function parseOptionalNumber(name: string): number | null {
   return value;
 }
 
+function parseNumberWithDefault(name: string, defaultValue: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return defaultValue;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number when set`);
+  }
+  return value;
+}
+
 function parseUrlList(name: string): string[] {
   const raw = getRequiredEnv(name);
   const urls = raw
@@ -150,21 +158,17 @@ function parseUrlList(name: string): string[] {
   return urls;
 }
 
-function parseOptionalUrl(name: string): string | null {
-  const raw = process.env[name];
-  if (!raw) {
-    return null;
-  }
-  const trimmed = raw.trim();
+function parseRequiredUrl(name: string): string {
+  const trimmed = getRequiredEnv(name).trim();
   if (!trimmed) {
-    return null;
+    throw new Error(`${name} must be a valid URL`);
   }
   try {
     // eslint-disable-next-line no-new
     new URL(trimmed);
     return trimmed;
   } catch {
-    throw new Error(`${name} must be a valid URL when set`);
+    throw new Error(`${name} must be a valid URL`);
   }
 }
 
@@ -321,8 +325,6 @@ async function main(): Promise<void> {
   let rateWindow: number;
   let queueName: string;
   let maxLoad: number | null;
-  let botHost: string;
-  let healthHost: string;
   let healthPort: number;
   let gitRepoPath: string;
   let gitRemote: string;
@@ -342,14 +344,12 @@ async function main(): Promise<void> {
       getRequiredEnv(env);
     }
 
-    port = parseNumber("BOT_PORT");
+    port = parseNumberWithDefault("HTTP_PORT", 3028);
     rateLimitMax = parseNumber("BOT_RATE_LIMIT");
     rateWindow = parseNumber("BOT_RATE_WINDOW_SEC");
     queueName = getRequiredEnv("BOT_QUEUE_NAME");
     maxLoad = parseOptionalNumber("BOT_MAX_LOAD1");
-    botHost = getRequiredEnv("BOT_HOST");
-    healthHost = getRequiredEnv("HEALTH_HOST");
-    healthPort = parseNumber("HEALTH_PORT");
+    healthPort = parseNumberWithDefault("HEALTH_PORT", 3001);
     extraCheckUrls = parseUrlList("BOT_CHECK_URLS");
     parseNumber("HEALTH_CHECK_INTERVAL_MS");
     healthCheckTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
@@ -358,13 +358,12 @@ async function main(): Promise<void> {
     gitBranch = getRequiredEnv("GIT_BRANCH");
     discordToken = getRequiredEnv("DISCORD_TOKEN");
     discordAppId = getDiscordAppId();
-    workerHealthUrl = parseOptionalUrl("WORKER_HEALTH_URL") ?? "";
-    worker2HealthUrl = parseOptionalUrl("WORKER2_HEALTH_URL") ?? "";
+    const workerBaseUrl = parseRequiredUrl("WORKER1_URL");
+    const worker2BaseUrl = parseRequiredUrl("WORKER2_URL");
+    workerHealthUrl = new URL("/healthz", workerBaseUrl).toString();
+    worker2HealthUrl = new URL("/healthz", worker2BaseUrl).toString();
     statusCheckTimeoutMs = parseOptionalNumber("STATUS_CHECK_TIMEOUT_MS") ?? 1500;
     statusCheckRetries = parseOptionalNumber("STATUS_CHECK_RETRIES") ?? 1;
-    if (!workerHealthUrl || !worker2HealthUrl) {
-      throw new Error("WORKER_HEALTH_URL and WORKER2_HEALTH_URL are required");
-    }
     if (isPostgresConfigured()) {
       ensurePostgresConfigValid();
     }
@@ -497,6 +496,9 @@ async function main(): Promise<void> {
     });
   });
 
+  const botHost = "0.0.0.0";
+  const healthHost = "0.0.0.0";
+
   httpLogger.info(`event=http_start host=${botHost} port=${port}`);
   server.listen(port, botHost, () => {
     httpLogger.info(`event=http_listen host=${botHost} port=${port}`);
@@ -507,6 +509,7 @@ async function main(): Promise<void> {
     serviceName: "bot",
     port: healthPort,
     host: healthHost,
+    getVersion: () => loadVersionInfo(gitRepoPath),
     getState: () => serviceState.getSnapshot(),
     deriveState: (checks) => {
       deriveBotState(serviceState, checks);

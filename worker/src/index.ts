@@ -17,6 +17,9 @@ import {
   ServiceStateTracker
 } from "@project/shared";
 import { RedisClient } from "@project/shared";
+import { execFileSync } from "child_process";
+import fs from "fs";
+import path from "path";
 import { URL } from "url";
 
 const REQUIRED_ENV = [
@@ -25,8 +28,6 @@ const REQUIRED_ENV = [
   "WORKER_MAX_ATTEMPTS",
   "WORKER_IDEMPOTENCY_TTL_SEC",
   "WORKER_BACKOFF_BASE_MS",
-  "HEALTH_HOST",
-  "HEALTH_PORT",
   "HEALTH_CHECK_INTERVAL_MS",
   "HEALTH_CHECK_TIMEOUT_MS",
   "GIT_REPO_PATH",
@@ -70,6 +71,18 @@ function parseOptionalNumber(name: string): number | null {
   return value;
 }
 
+function parseNumberWithDefault(name: string, defaultValue: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return defaultValue;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number when set`);
+  }
+  return value;
+}
+
 function parseOptionalUrl(name: string): string | null {
   const raw = process.env[name];
   if (!raw) {
@@ -97,6 +110,42 @@ function sanitizeErrorStack(stack: string): string {
     }
   }
   return sanitized;
+}
+
+function loadPackageVersion(): string | null {
+  try {
+    const pkgPath = path.resolve(process.cwd(), "package.json");
+    const raw = fs.readFileSync(pkgPath, "utf-8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function loadGitVersion(repoPath: string): string | null {
+  try {
+    const output = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: repoPath,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const version = output.toString("utf-8").trim();
+    return version.length > 0 ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadVersionInfo(repoPath: string): string {
+  const gitVersion = loadGitVersion(repoPath);
+  if (gitVersion) {
+    return gitVersion;
+  }
+  const pkgVersion = loadPackageVersion();
+  if (pkgVersion) {
+    return pkgVersion;
+  }
+  return "0.0.0";
 }
 
 function exitWithStartupError(error: unknown, context: string): void {
@@ -174,7 +223,6 @@ async function main(): Promise<void> {
   let maxAttempts: number;
   let idempotencyTtl: number;
   let baseBackoffMs: number;
-  let healthHost: string;
   let healthPort: number;
   let botHealthUrl: string | null;
   let healthCheckTimeoutMs: number;
@@ -200,8 +248,7 @@ async function main(): Promise<void> {
     maxAttempts = parseNumber("WORKER_MAX_ATTEMPTS");
     idempotencyTtl = parseNumber("WORKER_IDEMPOTENCY_TTL_SEC");
     baseBackoffMs = parseNumber("WORKER_BACKOFF_BASE_MS");
-    healthHost = getRequiredEnv("HEALTH_HOST");
-    healthPort = parseNumber("HEALTH_PORT");
+    healthPort = parseNumberWithDefault("HEALTH_PORT", 3001);
     botHealthUrl =
       parseOptionalUrl("BOT_HEALTH_URL") ??
       parseOptionalUrl("WORKER_BOT_HEALTH_URL") ??
@@ -248,11 +295,13 @@ async function main(): Promise<void> {
   const serviceState = new ServiceStateTracker("STARTING");
   serviceState.setState("READY");
 
+  const healthHost = "0.0.0.0";
   healthLogger.info(`event=health_start host=${healthHost} port=${healthPort}`);
   const healthServer = startHealthServer({
     serviceName: "worker",
     port: healthPort,
     host: healthHost,
+    getVersion: () => loadVersionInfo(gitRepoPath),
     getState: () => serviceState.getSnapshot(),
     deriveState: (checks) => {
       const redisOk = checks.redis?.ok ?? false;

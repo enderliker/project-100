@@ -9,6 +9,7 @@ import { runMiddleware } from "./middleware";
 import { getCommand } from "./registry";
 
 const handlerLogger = createLogger("discord");
+const logCommandEvents = process.env.LOG_COMMAND_EVENTS === "1";
 
 function createErrorResponse(correlationId: string, version: string) {
   return buildBaseEmbed(
@@ -45,9 +46,11 @@ async function executeCommand(
     commandName: command.name
   });
 
-  handlerLogger.info(
-    `event=command_execute command=${command.name} user=${context.user.id} guild=${context.guild?.id ?? "dm"} interaction=${interaction.id}`
-  );
+  if (logCommandEvents) {
+    handlerLogger.info(
+      `event=command_execute command=${command.name} user=${context.user.id} guild=${context.guild?.id ?? "dm"} interaction=${interaction.id}`
+    );
+  }
 
   const middlewareResult = runMiddleware(command, context);
   if (!middlewareResult.ok) {
@@ -57,9 +60,11 @@ async function executeCommand(
 
   try {
     await command.execute(context);
-    handlerLogger.info(
-      `event=command_complete command=${command.name} user=${context.user.id} guild=${context.guild?.id ?? "dm"} interaction=${interaction.id}`
-    );
+    if (logCommandEvents) {
+      handlerLogger.info(
+        `event=command_complete command=${command.name} user=${context.user.id} guild=${context.guild?.id ?? "dm"} interaction=${interaction.id}`
+      );
+    }
   } catch (error) {
     const stack = error instanceof Error ? error.stack ?? error.message : String(error);
     handlerLogger.error(
