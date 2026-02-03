@@ -103,6 +103,20 @@ function exitWithConfigError(error: unknown): never {
   process.exit(1);
 }
 
+function runBuildForUpdatedRepo(repoPath: string): void {
+  startupLogger.info("event=repo_build_start reason=git_update");
+  try {
+    execFileSync("npm", ["run", "build"], {
+      cwd: repoPath,
+      stdio: "inherit"
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`repo build failed after git update: ${message}`);
+  }
+  startupLogger.info("event=repo_build_complete reason=git_update");
+}
+
 function parseNumber(name: string): number {
   const raw = getRequiredEnv(name);
   const value = Number(raw);
@@ -360,11 +374,17 @@ async function main(): Promise<void> {
 
   startupLogger.info("event=config_validated");
 
-  await runGitUpdateOnce({
+  const gitUpdateResult = await runGitUpdateOnce({
     repoPath: gitRepoPath,
     remote: gitRemote,
     branch: gitBranch
   });
+  if (
+    gitUpdateResult.status === "fast_forward" ||
+    gitUpdateResult.status === "local_changes"
+  ) {
+    runBuildForUpdatedRepo(gitRepoPath);
+  }
 
   const redis = createRedisClient();
   if (isPostgresConfigured()) {
