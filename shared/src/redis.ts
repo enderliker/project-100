@@ -3,12 +3,7 @@ import Redis from "ioredis";
 
 export type RedisClient = Redis;
 
-const REQUIRED_ENV = [
-  "REDIS_HOST",
-  "REDIS_PORT",
-  "REDIS_PASSWORD",
-  "REDIS_CA_PATH"
-];
+const REQUIRED_ENV = ["REDIS_HOST", "REDIS_PORT"];
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -16,6 +11,15 @@ function getRequiredEnv(name: string): string {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+function getOptionalEnv(name: string): string | undefined {
+  const value = process.env[name];
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function sanitizeRedisErrorMessage(message: string): string {
@@ -35,11 +39,38 @@ function parseRedisPort(): number {
 }
 
 function getRedisUsername(): string | undefined {
-  const username = process.env.REDIS_USERNAME;
-  if (!username || username.trim().length === 0) {
-    return undefined;
+  return getOptionalEnv("REDIS_USERNAME");
+}
+
+function parseRedisTlsEnabled(): boolean {
+  return process.env.REDIS_TLS === "true";
+}
+
+function parseRejectUnauthorized(): boolean {
+  const value = process.env.REDIS_TLS_REJECT_UNAUTHORIZED;
+  if (!value) {
+    return true;
   }
-  return username;
+  return value === "true";
+}
+
+function logRedisConfig({
+  host,
+  port,
+  tlsEnabled,
+  authEnabled,
+  username
+}: {
+  host: string;
+  port: number;
+  tlsEnabled: boolean;
+  authEnabled: boolean;
+  username?: string;
+}): void {
+  const usernamePart = username ? ` username=${username}` : "";
+  console.info(
+    `[redis] config host=${host} port=${port} tls=${tlsEnabled ? "on" : "off"} auth=${authEnabled ? "on" : "off"}${usernamePart}`
+  );
 }
 
 export function createRedisClient(): RedisClient {
@@ -50,19 +81,40 @@ export function createRedisClient(): RedisClient {
   const host = getRequiredEnv("REDIS_HOST");
   const port = parseRedisPort();
 
-  const password = getRequiredEnv("REDIS_PASSWORD");
+  const password = getOptionalEnv("REDIS_PASSWORD");
   const username = getRedisUsername();
-  const caPath = getRequiredEnv("REDIS_CA_PATH");
-  const ca = fs.readFileSync(caPath, "utf-8");
+  if (username && !password) {
+    throw new Error("REDIS_USERNAME is set but REDIS_PASSWORD is missing.");
+  }
+
+  const tlsEnabled = parseRedisTlsEnabled();
+  const caPath = getOptionalEnv("REDIS_CA_PATH");
+  if (!tlsEnabled && caPath) {
+    console.warn(
+      '[redis] REDIS_CA_PATH is set but REDIS_TLS is not "true"; ignoring CA file.'
+    );
+  }
+
+  const tlsOptions = tlsEnabled
+    ? {
+        ...(caPath ? { ca: fs.readFileSync(caPath, "utf-8") } : {}),
+        rejectUnauthorized: parseRejectUnauthorized()
+      }
+    : undefined;
+
+  logRedisConfig({
+    host,
+    port,
+    tlsEnabled,
+    authEnabled: Boolean(password),
+    username
+  });
 
   const client = new Redis({
     host,
     port,
-    password,
-    tls: {
-      ca,
-      rejectUnauthorized: true
-    },
+    ...(password ? { password } : {}),
+    ...(tlsOptions ? { tls: tlsOptions } : {}),
     ...(username ? { username } : {}),
     connectTimeout: 10000,
     enableReadyCheck: true,
@@ -80,7 +132,14 @@ export function createRedisClient(): RedisClient {
   client.on("error", (error) => {
     const message =
       error instanceof Error ? error.message : "Unknown Redis client error";
-    console.error(`[redis] error: ${sanitizeRedisErrorMessage(message)}`);
+    const sanitized = sanitizeRedisErrorMessage(message);
+    if (sanitized.includes("WRONGPASS")) {
+      console.error(
+        "[redis] error: WRONGPASS invalid username-password pair or user is disabled. Exiting."
+      );
+      process.exit(1);
+    }
+    console.error(`[redis] error: ${sanitized}`);
   });
 
   client.on("ready", () => {
