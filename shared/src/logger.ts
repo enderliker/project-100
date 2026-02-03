@@ -14,19 +14,23 @@ export interface Logger {
   info: (message: string) => void;
   warn: (message: string) => void;
   error: (message: string) => void;
+  fatal: (message: string) => void;
 }
 
 export function createLogger(prefix: LogPrefix): Logger {
   const tag = `[${prefix}]`;
   return {
     info: (message: string) => {
-      console.info(`${tag} ${message}`);
+      console.info(`${tag} level=info ${message}`);
     },
     warn: (message: string) => {
-      console.warn(`${tag} ${message}`);
+      console.warn(`${tag} level=warn ${message}`);
     },
     error: (message: string) => {
-      console.error(`${tag} ${message}`);
+      console.error(`${tag} level=error ${message}`);
+    },
+    fatal: (message: string) => {
+      console.error(`${tag} level=fatal ${message}`);
     }
   };
 }

@@ -11,17 +11,26 @@ import {
 } from "discord.js";
 import {
   createJob,
+  createPostgresPool,
   createRedisClient,
+  checkPostgresHealth,
+  checkRedisHealth,
   enqueueJob,
   getLoadMetrics,
   rateLimit,
   registerGracefulShutdown,
   runGitUpdateOnce,
   startHealthServer,
-  createLogger
+  createLogger,
+  ServiceStateTracker,
+  RemoteServiceCheckResult,
+  checkRemoteService
 } from "@project/shared";
 import { execFileSync } from "child_process";
+import { URL } from "url";
 import { buildStatusEmbed, fetchStatusSnapshot } from "./status";
+import { buildBaseEmbed } from "./embeds";
+import { Pool } from "pg";
 
 const REQUIRED_ENV = [
   "BOT_PORT",
@@ -38,7 +47,9 @@ const REQUIRED_ENV = [
   "GIT_REMOTE",
   "GIT_BRANCH",
   "DISCORD_TOKEN",
-  "DISCORD_APP_ID"
+  "DISCORD_APP_ID",
+  "WORKER_HEALTH_URL",
+  "WORKER2_HEALTH_URL"
 ];
 
 const SENSITIVE_ENV = ["DISCORD_TOKEN", "REDIS_PASSWORD", "PG_PASSWORD"];
@@ -47,6 +58,19 @@ const redisLogger = createLogger("redis");
 const httpLogger = createLogger("http");
 const healthLogger = createLogger("health");
 const discordLogger = createLogger("discord");
+
+const POSTGRES_REQUIRED_ENV = [
+  "PG_HOST",
+  "PG_PORT",
+  "PG_USER",
+  "PG_PASSWORD",
+  "PG_DATABASE",
+  "PG_POOL_MAX",
+  "PG_IDLE_TIMEOUT_MS",
+  "PG_SSL_REJECT_UNAUTHORIZED",
+  "PG_QUERY_BASE_DELAY_MS",
+  "PG_QUERY_MAX_DELAY_MS"
+];
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -70,14 +94,14 @@ function sanitizeErrorStack(stack: string): string {
 function exitWithStartupError(error: unknown, context: string): void {
   const stack =
     error instanceof Error ? error.stack ?? error.message : String(error);
-  startupLogger.error(context);
-  startupLogger.error(sanitizeErrorStack(stack));
+  startupLogger.fatal(`event=startup_failed context="${context}"`);
+  startupLogger.fatal(`stack="${sanitizeErrorStack(stack)}"`);
   process.exit(1);
 }
 
 function exitWithConfigError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
-  startupLogger.error(`config invalid: ${message}`);
+  startupLogger.fatal(`event=config_invalid message="${message}"`);
   process.exit(1);
 }
 
@@ -112,6 +136,24 @@ function parseUrlList(name: string): string[] {
     throw new Error(`${name} must include at least one URL`);
   }
   return urls;
+}
+
+function parseOptionalUrl(name: string): string | null {
+  const raw = process.env[name];
+  if (!raw) {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    // eslint-disable-next-line no-new
+    new URL(trimmed);
+    return trimmed;
+  } catch {
+    throw new Error(`${name} must be a valid URL when set`);
+  }
 }
 
 function getDiscordAppId(): string {
@@ -213,8 +255,54 @@ function loadVersionInfo(repoPath: string): string {
   return "0.0.0";
 }
 
+function isPostgresConfigured(): boolean {
+  return POSTGRES_REQUIRED_ENV.some((name) => Boolean(process.env[name]));
+}
+
+function ensurePostgresConfigValid(): void {
+  const missing = POSTGRES_REQUIRED_ENV.filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    throw new Error(`Postgres config incomplete: missing ${missing.join(", ")}`);
+  }
+}
+
+function summarizeRemoteCheck(result: RemoteServiceCheckResult): string {
+  if (result.status === "up") {
+    return "ok";
+  }
+  return result.reason ?? "down";
+}
+
+function deriveBotState(
+  serviceState: ServiceStateTracker,
+  checks: Record<string, { ok: boolean; reason?: string }>
+): void {
+  const redisOk = checks.redis?.ok ?? false;
+  const postgresOk = checks.postgres?.ok ?? true;
+  const workerOk = checks.worker?.ok ?? false;
+  const worker2Ok = checks.worker2?.ok ?? false;
+
+  if (!redisOk) {
+    serviceState.setState("ERROR", "redis_unreachable");
+    return;
+  }
+
+  if (!postgresOk) {
+    serviceState.setState("ERROR", "postgres_unreachable");
+    return;
+  }
+
+  if (!workerOk || !worker2Ok) {
+    const detail = `worker=${workerOk ? "up" : "down"} worker2=${worker2Ok ? "up" : "down"}`;
+    serviceState.setState("DEGRADED", `workers_unreachable ${detail}`);
+    return;
+  }
+
+  serviceState.setState("READY");
+}
+
 async function main(): Promise<void> {
-  startupLogger.info("env loaded");
+  startupLogger.info("event=env_loaded");
 
   let port: number;
   let rateLimitMax: number;
@@ -229,10 +317,13 @@ async function main(): Promise<void> {
   let gitBranch: string;
   let discordToken: string;
   let discordAppId: string;
-  let workerHealthUrl: string | null;
-  let worker2HealthUrl: string | null;
+  let workerHealthUrl: string;
+  let worker2HealthUrl: string;
   let statusCheckTimeoutMs: number;
   let statusCheckRetries: number;
+  let healthCheckTimeoutMs: number;
+  let extraCheckUrls: string[];
+  let postgresPool: Pool | null = null;
 
   try {
     for (const env of REQUIRED_ENV) {
@@ -247,23 +338,29 @@ async function main(): Promise<void> {
     botHost = getRequiredEnv("BOT_HOST");
     healthHost = getRequiredEnv("HEALTH_HOST");
     healthPort = parseNumber("HEALTH_PORT");
-    parseUrlList("BOT_CHECK_URLS");
+    extraCheckUrls = parseUrlList("BOT_CHECK_URLS");
     parseNumber("HEALTH_CHECK_INTERVAL_MS");
-    parseNumber("HEALTH_CHECK_TIMEOUT_MS");
+    healthCheckTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
     gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
     gitRemote = getRequiredEnv("GIT_REMOTE");
     gitBranch = getRequiredEnv("GIT_BRANCH");
     discordToken = getRequiredEnv("DISCORD_TOKEN");
     discordAppId = getDiscordAppId();
-    workerHealthUrl = process.env.WORKER_HEALTH_URL ?? null;
-    worker2HealthUrl = process.env.WORKER2_HEALTH_URL ?? null;
+    workerHealthUrl = parseOptionalUrl("WORKER_HEALTH_URL") ?? "";
+    worker2HealthUrl = parseOptionalUrl("WORKER2_HEALTH_URL") ?? "";
     statusCheckTimeoutMs = parseOptionalNumber("STATUS_CHECK_TIMEOUT_MS") ?? 1500;
     statusCheckRetries = parseOptionalNumber("STATUS_CHECK_RETRIES") ?? 1;
+    if (!workerHealthUrl || !worker2HealthUrl) {
+      throw new Error("WORKER_HEALTH_URL and WORKER2_HEALTH_URL are required");
+    }
+    if (isPostgresConfigured()) {
+      ensurePostgresConfigValid();
+    }
   } catch (error) {
     exitWithConfigError(error);
   }
 
-  startupLogger.info("config validated");
+  startupLogger.info("event=config_validated");
 
   await runGitUpdateOnce({
     repoPath: gitRepoPath,
@@ -272,14 +369,49 @@ async function main(): Promise<void> {
   });
 
   const redis = createRedisClient();
+  if (isPostgresConfigured()) {
+    postgresPool = createPostgresPool();
+  }
   try {
-    redisLogger.info("connecting");
+    redisLogger.info("event=redis_connecting");
     await redis.connect();
     await redis.ping();
-    redisLogger.info("connection ready (ping ok)");
+    redisLogger.info("event=redis_ready detail=ping_ok");
   } catch (error) {
     logRedisStartupFailure(error);
     exitWithStartupError(error, "redis startup failed");
+  }
+
+  const serviceState = new ServiceStateTracker("STARTING");
+  const statusOptions = {
+    timeoutMs: statusCheckTimeoutMs,
+    retries: statusCheckRetries
+  };
+
+  try {
+    const [workerCheck, worker2Check] = await Promise.all([
+      checkRemoteService(workerHealthUrl, statusOptions),
+      checkRemoteService(worker2HealthUrl, statusOptions)
+    ]);
+    if (workerCheck.status !== "up" && worker2Check.status !== "up") {
+      serviceState.setState(
+        "DEGRADED",
+        `workers_down: worker=${summarizeRemoteCheck(workerCheck)} worker2=${summarizeRemoteCheck(worker2Check)}`
+      );
+      startupLogger.warn("event=dependency_check result=degraded reason=workers_down");
+    } else if (workerCheck.status !== "up" || worker2Check.status !== "up") {
+      serviceState.setState(
+        "DEGRADED",
+        `partial_workers: worker=${summarizeRemoteCheck(workerCheck)} worker2=${summarizeRemoteCheck(worker2Check)}`
+      );
+      startupLogger.warn("event=dependency_check result=degraded reason=partial_workers");
+    } else {
+      serviceState.setState("READY");
+      startupLogger.info("event=dependency_check result=ready");
+    }
+  } catch (error) {
+    serviceState.setState("DEGRADED", "workers_check_failed");
+    startupLogger.warn("event=dependency_check result=degraded reason=check_failed");
   }
 
   const server = http.createServer(async (req, res) => {
@@ -347,21 +479,80 @@ async function main(): Promise<void> {
     });
   });
 
-  httpLogger.info(`starting server host=${botHost} port=${port}`);
+  httpLogger.info(`event=http_start host=${botHost} port=${port}`);
   server.listen(port, botHost, () => {
-    httpLogger.info(`server listening host=${botHost} port=${port}`);
+    httpLogger.info(`event=http_listen host=${botHost} port=${port}`);
   });
 
-  healthLogger.info(`starting server host=${healthHost} port=${healthPort}`);
-  const healthServer = startHealthServer("bot", { port: healthPort, host: healthHost });
+  healthLogger.info(`event=health_start host=${healthHost} port=${healthPort}`);
+  const healthServer = startHealthServer({
+    serviceName: "bot",
+    port: healthPort,
+    host: healthHost,
+    getState: () => serviceState.getSnapshot(),
+    deriveState: (checks) => {
+      deriveBotState(serviceState, checks);
+      return serviceState.getSnapshot();
+    },
+    checks: {
+      redis: async () => checkRedisHealth(redis, healthCheckTimeoutMs),
+      postgres: async () => {
+        if (!postgresPool) {
+          return { ok: true, reason: "not_configured" };
+        }
+        return checkPostgresHealth(postgresPool, healthCheckTimeoutMs);
+      },
+      worker: async () => {
+        const result = await checkRemoteService(workerHealthUrl, {
+          timeoutMs: healthCheckTimeoutMs,
+          retries: 1
+        });
+        return {
+          ok: result.status === "up",
+          reason: result.reason,
+          latencyMs: result.latencyMs,
+          statusCode: result.statusCode
+        };
+      },
+      worker2: async () => {
+        const result = await checkRemoteService(worker2HealthUrl, {
+          timeoutMs: healthCheckTimeoutMs,
+          retries: 1
+        });
+        return {
+          ok: result.status === "up",
+          reason: result.reason,
+          latencyMs: result.latencyMs,
+          statusCode: result.statusCode
+        };
+      },
+      ...Object.fromEntries(
+        extraCheckUrls.map((url, index) => [
+          `external_${index + 1}`,
+          async () => {
+            const result = await checkRemoteService(url, {
+              timeoutMs: healthCheckTimeoutMs,
+              retries: 1
+            });
+            return {
+              ok: result.status === "up",
+              reason: result.reason,
+              latencyMs: result.latencyMs,
+              statusCode: result.statusCode
+            };
+          }
+        ])
+      )
+    }
+  });
   healthServer.on("listening", () => {
-    healthLogger.info(`server listening host=${healthHost} port=${healthPort}`);
+    healthLogger.info(`event=health_listen host=${healthHost} port=${healthPort}`);
   });
 
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   const readyPromise = new Promise<void>((resolve, reject) => {
     client.once("ready", () => {
-      discordLogger.info("ready");
+      discordLogger.info("event=discord_ready");
       resolve();
     });
     client.once("error", (error: Error) => {
@@ -381,34 +572,70 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (interaction.commandName === "ping") {
-      const latency = Date.now() - interaction.createdTimestamp;
-      await interaction.reply(`pong (${latency}ms)`);
-      return;
-    }
-
-    if (interaction.commandName === "status") {
+    try {
       const version = loadVersionInfo(gitRepoPath);
-      const snapshot = await fetchStatusSnapshot({
-        workerUrl: workerHealthUrl ?? undefined,
-        worker2Url: worker2HealthUrl ?? undefined,
-        timeoutMs: statusCheckTimeoutMs,
-        retries: statusCheckRetries
-      });
-      const embed = buildStatusEmbed(
+      const embedContext = { serviceName: "bot", version };
+
+      if (interaction.commandName === "ping") {
+        const latency = Date.now() - interaction.createdTimestamp;
+        const wsLatency = client.ws.ping;
+        const uptimeSeconds = process.uptime();
+        const embed = buildBaseEmbed(embedContext, {
+          title: "Pong",
+          description: `ws \`${wsLatency}ms\` • api \`${latency}ms\` • uptime \`${Math.round(
+            uptimeSeconds
+          )}s\``
+        });
+        await interaction.reply({ embeds: [embed] });
+        return;
+      }
+
+      if (interaction.commandName === "status") {
+        const snapshot = await fetchStatusSnapshot({
+          workerUrl: workerHealthUrl ?? undefined,
+          worker2Url: worker2HealthUrl ?? undefined,
+          timeoutMs: statusCheckTimeoutMs,
+          retries: statusCheckRetries
+        });
+
+        const redisHealth = await checkRedisHealth(redis, statusCheckTimeoutMs);
+        const postgresHealth = postgresPool
+          ? await checkPostgresHealth(postgresPool, statusCheckTimeoutMs)
+          : null;
+
+        const embed = buildStatusEmbed(
+          embedContext,
+          {
+            serviceMode: process.env.SERVICE_MODE ?? "bot",
+            uptimeSeconds: process.uptime(),
+            redisConnected: redisHealth.ok,
+            postgresConnected: postgresHealth ? postgresHealth.ok : null,
+            version
+          },
+          snapshot
+        );
+        await interaction.reply({ embeds: [embed] });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      const version = loadVersionInfo(gitRepoPath);
+      const embed = buildBaseEmbed(
+        { serviceName: "bot", version },
         {
-          serviceMode: process.env.SERVICE_MODE ?? "bot",
-          uptimeSeconds: process.uptime(),
-          redisConnected: redis.status === "ready",
-          version
-        },
-        snapshot
+          title: "Command Error",
+          description: `error \`${message}\``,
+          variant: "error"
+        }
       );
-      await interaction.reply({ embeds: [embed] });
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({ embeds: [embed], ephemeral: true });
+        return;
+      }
+      await interaction.reply({ embeds: [embed], ephemeral: true });
     }
   });
 
-  discordLogger.info("login starting");
+  discordLogger.info("event=discord_login");
   await client.login(discordToken);
   await readyPromise;
 
@@ -421,6 +648,11 @@ async function main(): Promise<void> {
       new Promise<void>((resolve) => {
         healthServer.close(() => resolve());
       }),
+    async () => {
+      if (postgresPool) {
+        await postgresPool.end();
+      }
+    },
     async () => {
       await redis.quit();
     },
