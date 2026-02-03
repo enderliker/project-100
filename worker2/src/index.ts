@@ -6,9 +6,10 @@ import {
   registerGracefulShutdown,
   requeueJob,
   sendToDeadLetter,
-  startGitAutoPull,
+  runGitAutopullOnceOnStartup,
   startHealthChecker,
-  startHealthServer
+  startHealthServer,
+  createLogger
 } from "@project/shared";
 import { RedisClient } from "@project/shared";
 
@@ -32,6 +33,10 @@ const REQUIRED_ENV = [
   "PG_QUERY_MAX_DELAY_MS"
 ];
 const SENSITIVE_ENV = ["REDIS_PASSWORD", "PG_PASSWORD"];
+const startupLogger = createLogger("startup");
+const redisLogger = createLogger("redis");
+const postgresLogger = createLogger("postgres");
+const healthLogger = createLogger("health");
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -64,8 +69,14 @@ function sanitizeErrorStack(stack: string): string {
 function exitWithStartupError(error: unknown, context: string): void {
   const stack =
     error instanceof Error ? error.stack ?? error.message : String(error);
-  console.error(`[startup] ${context}`);
-  console.error(sanitizeErrorStack(stack));
+  startupLogger.error(context);
+  startupLogger.error(sanitizeErrorStack(stack));
+  process.exit(1);
+}
+
+function exitWithConfigError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  startupLogger.error(`config invalid: ${message}`);
   process.exit(1);
 }
 
@@ -109,77 +120,100 @@ function getRedisStartupErrorMessage(error: unknown): string {
 function logRedisStartupFailure(error: unknown): void {
   const message = getRedisStartupErrorMessage(error);
   if (message.includes("WRONGPASS")) {
-    console.error(
-      "[redis] authentication failed (WRONGPASS). Check REDIS_USERNAME/REDIS_PASSWORD."
+    redisLogger.error(
+      "authentication failed (WRONGPASS). Check REDIS_USERNAME/REDIS_PASSWORD."
     );
     return;
   }
-  console.error(`[redis] startup failed: ${message}`);
+  redisLogger.error(`startup failed: ${message}`);
 }
 
 async function main(): Promise<void> {
-  console.info("[startup] env loaded");
+  startupLogger.info("env loaded");
 
-  for (const env of REQUIRED_ENV) {
-    getRequiredEnv(env);
-  }
-
-  console.info("[postgres] connecting");
-  const queryOptions = {
-    maxRetries: parseNumber("PG_QUERY_MAX_RETRIES"),
-    baseDelayMs: parseNumber("PG_QUERY_BASE_DELAY_MS"),
-    maxDelayMs: parseNumber("PG_QUERY_MAX_DELAY_MS")
+  let queryOptions: {
+    maxRetries: number;
+    baseDelayMs: number;
+    maxDelayMs: number;
   };
+  let queueName: string;
+  let deadLetterQueue: string;
+  let maxAttempts: number;
+  let idempotencyTtl: number;
+  let baseBackoffMs: number;
+  let healthHost: string;
+  let healthPort: number;
+  let botHealthUrl: string;
+  let checkerIntervalMs: number;
+  let checkerTimeoutMs: number;
+  let gitRepoPath: string;
+  let gitRemote: string;
+  let gitBranch: string;
 
   try {
+    for (const env of REQUIRED_ENV) {
+      getRequiredEnv(env);
+    }
+
+    queryOptions = {
+      maxRetries: parseNumber("PG_QUERY_MAX_RETRIES"),
+      baseDelayMs: parseNumber("PG_QUERY_BASE_DELAY_MS"),
+      maxDelayMs: parseNumber("PG_QUERY_MAX_DELAY_MS")
+    };
+
+    queueName = getRequiredEnv("WORKER2_QUEUE_NAME");
+    deadLetterQueue = getRequiredEnv("WORKER2_DEAD_LETTER_QUEUE");
+    maxAttempts = parseNumber("WORKER2_MAX_ATTEMPTS");
+    idempotencyTtl = parseNumber("WORKER2_IDEMPOTENCY_TTL_SEC");
+    baseBackoffMs = parseNumber("WORKER2_BACKOFF_BASE_MS");
+    healthHost = getRequiredEnv("HEALTH_HOST");
+    healthPort = parseNumber("HEALTH_PORT");
+    botHealthUrl = getRequiredEnv("WORKER2_BOT_HEALTH_URL");
+    checkerIntervalMs = parseNumber("HEALTH_CHECK_INTERVAL_MS");
+    checkerTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
+    gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
+    gitRemote = getRequiredEnv("GIT_REMOTE");
+    gitBranch = getRequiredEnv("GIT_BRANCH");
+    parseNumber("GIT_AUTOPULL_INTERVAL_MS");
+  } catch (error) {
+    exitWithConfigError(error);
+  }
+
+  try {
+    postgresLogger.info("connecting");
     await ensureTable(queryOptions);
-    console.info("[postgres] connection ready");
+    postgresLogger.info("connection ready");
   } catch (error) {
     exitWithStartupError(error, "postgres startup failed");
   }
 
-  const queueName = getRequiredEnv("WORKER2_QUEUE_NAME");
-  const deadLetterQueue = getRequiredEnv("WORKER2_DEAD_LETTER_QUEUE");
-  const maxAttempts = parseNumber("WORKER2_MAX_ATTEMPTS");
-  const idempotencyTtl = parseNumber("WORKER2_IDEMPOTENCY_TTL_SEC");
-  const baseBackoffMs = parseNumber("WORKER2_BACKOFF_BASE_MS");
-  const healthHost = getRequiredEnv("HEALTH_HOST");
-  const healthPort = parseNumber("HEALTH_PORT");
-  const botHealthUrl = getRequiredEnv("WORKER2_BOT_HEALTH_URL");
-  const checkerIntervalMs = parseNumber("HEALTH_CHECK_INTERVAL_MS");
-  const checkerTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
-  const gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
-  const gitRemote = getRequiredEnv("GIT_REMOTE");
-  const gitBranch = getRequiredEnv("GIT_BRANCH");
-  const gitIntervalMs = parseNumber("GIT_AUTOPULL_INTERVAL_MS");
-  console.info("[startup] config validated");
+  startupLogger.info("config validated");
 
-  startGitAutoPull({
+  await runGitAutopullOnceOnStartup({
     repoPath: gitRepoPath,
     remote: gitRemote,
-    branch: gitBranch,
-    intervalMs: gitIntervalMs
+    branch: gitBranch
   });
 
   const redis = createRedisClient();
   const pool = createPostgresPool();
   try {
-    console.info("[redis] connecting");
+    redisLogger.info("connecting");
     await redis.connect();
     await redis.ping();
-    console.info("[redis] connection ready (ping ok)");
+    redisLogger.info("connection ready (ping ok)");
   } catch (error) {
     logRedisStartupFailure(error);
     exitWithStartupError(error, "redis startup failed");
   }
 
-  console.info(`[health] starting server host=${healthHost} port=${healthPort}`);
+  healthLogger.info(`starting server host=${healthHost} port=${healthPort}`);
   const healthServer = startHealthServer("worker2", {
     port: healthPort,
     host: healthHost
   });
   healthServer.on("listening", () => {
-    console.info(`[health] server listening host=${healthHost} port=${healthPort}`);
+    healthLogger.info(`server listening host=${healthHost} port=${healthPort}`);
   });
 
   const checkerUrls = [botHealthUrl];

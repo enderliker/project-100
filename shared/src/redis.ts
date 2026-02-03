@@ -1,5 +1,6 @@
 import fs from "fs";
 import Redis from "ioredis";
+import { createLogger } from "./logger";
 
 export type RedisClient = Redis;
 
@@ -18,6 +19,7 @@ const REQUIRED_ENV = [
   "REDIS_RETRY_JITTER_MS",
   "REDIS_RETRY_MAX_DELAY_MS"
 ];
+const logger = createLogger("redis");
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -97,8 +99,8 @@ function logRedisConfig({
   username?: string;
 }): void {
   const usernamePart = username ? ` username=${username}` : "";
-  console.info(
-    `[redis] config host=${host} port=${port} tls=${tlsEnabled ? "on" : "off"} auth=${authEnabled ? "on" : "off"}${usernamePart}`
+  logger.info(
+    `config host=${host} port=${port} tls=${tlsEnabled ? "on" : "off"} auth=${authEnabled ? "on" : "off"}${usernamePart}`
   );
 }
 
@@ -119,9 +121,7 @@ export function createRedisClient(): RedisClient {
   const tlsEnabled = parseRedisTlsEnabled();
   const caPath = getOptionalEnv("REDIS_CA_PATH");
   if (!tlsEnabled && caPath) {
-    console.warn(
-      '[redis] REDIS_CA_PATH is set but REDIS_TLS is not "true"; ignoring CA file.'
-    );
+    logger.warn('REDIS_CA_PATH is set but REDIS_TLS is not "true"; ignoring CA file.');
   }
 
   const tlsOptions = tlsEnabled
@@ -172,24 +172,24 @@ export function createRedisClient(): RedisClient {
       error instanceof Error ? error.message : "Unknown Redis client error";
     const sanitized = sanitizeRedisErrorMessage(message);
     if (sanitized.includes("WRONGPASS")) {
-      console.error(
-        "[redis] error: WRONGPASS invalid username-password pair or user is disabled. Exiting."
+      logger.error(
+        "error: WRONGPASS invalid username-password pair or user is disabled. Exiting."
       );
       process.exit(1);
     }
-    console.error(`[redis] error: ${sanitized}`);
+    logger.error(`error: ${sanitized}`);
   });
 
   client.on("ready", () => {
-    console.info("[redis] connection ready");
+    logger.info("connection ready");
   });
 
   client.on("end", () => {
-    console.warn("[redis] connection closed");
+    logger.warn("connection closed");
   });
 
   client.on("reconnecting", (time: number) => {
-    console.warn(`[redis] reconnecting in ${time}ms`);
+    logger.warn(`reconnecting in ${time}ms`);
   });
 
   return client;

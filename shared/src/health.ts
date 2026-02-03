@@ -1,6 +1,7 @@
 import http from "http";
 import https from "https";
 import { URL } from "url";
+import { createLogger } from "./logger";
 
 export type HealthCheck = () => Promise<boolean> | boolean;
 
@@ -180,6 +181,7 @@ export function startHealthChecker(
   }
 
   const { intervalMs, timeoutMs } = options;
+  const logger = createLogger("checker");
   const statusMap = new Map<string, HealthStatus>();
 
   const checkOnce = async (): Promise<void> => {
@@ -194,13 +196,11 @@ export function startHealthChecker(
         continue;
       }
       if (result.status === "up") {
-        console.info(`[checker] ${serviceName} status=up url=${url}`);
+        logger.info(`${serviceName} status=up url=${url}`);
         continue;
       }
       const reason = result.reason ?? "invalid_response";
-      console.warn(
-        `[checker] ${serviceName} status=down url=${url} reason=${reason}`
-      );
+      logger.warn(`${serviceName} status=down url=${url} reason=${reason}`);
     }
   };
 
