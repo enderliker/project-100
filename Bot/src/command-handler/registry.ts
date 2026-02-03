@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { pathToFileURL } from "url";
 import type { REST } from "discord.js";
 import { Routes } from "discord.js";
 import type { CommandDefinition } from "../commands/types";
@@ -78,8 +77,12 @@ export async function loadCommandDefinitions(
   for (const file of files) {
     try {
       const modulePath = path.join(commandsDir, file);
-      const moduleUrl = pathToFileURL(modulePath).toString();
-      const loaded = await import(moduleUrl);
+      // Use CommonJS require so Node can load compiled command modules reliably.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const loaded = require(modulePath) as {
+        command?: unknown;
+        default?: unknown;
+      };
       const candidate = (loaded as { command?: unknown; default?: unknown }).command ??
         (loaded as { command?: unknown; default?: unknown }).default;
 
