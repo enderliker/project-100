@@ -28,8 +28,8 @@ import {
 } from "@project/shared";
 import { execFileSync } from "child_process";
 import { URL } from "url";
-import { buildStatusEmbed, fetchStatusSnapshot } from "./status";
 import { buildBaseEmbed } from "./embeds";
+import { buildStatusEmbed, fetchStatusSnapshot } from "./status";
 import { Pool } from "pg";
 
 const REQUIRED_ENV = [
