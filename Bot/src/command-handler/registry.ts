@@ -76,21 +76,30 @@ export async function loadCommandDefinitions(
 
   const definitions = new Map<string, CommandDefinition>();
   for (const file of files) {
-    const modulePath = path.join(commandsDir, file);
-    const moduleUrl = pathToFileURL(modulePath).toString();
-    const loaded = await import(moduleUrl);
-    const candidate = (loaded as { command?: unknown; default?: unknown }).command ??
-      (loaded as { command?: unknown; default?: unknown }).default;
+    try {
+      const modulePath = path.join(commandsDir, file);
+      const moduleUrl = pathToFileURL(modulePath).toString();
+      const loaded = await import(moduleUrl);
+      const candidate = (loaded as { command?: unknown; default?: unknown }).command ??
+        (loaded as { command?: unknown; default?: unknown }).default;
 
-    if (!isCommandDefinition(candidate)) {
-      throw new Error(`Invalid command module: ${file}`);
-    }
+      if (!isCommandDefinition(candidate)) {
+        throw new Error("module does not export a valid command definition");
+      }
 
-    const name = candidate.data.name;
-    if (definitions.has(name)) {
-      throw new Error(`Duplicate command definition detected: ${name}`);
+      const name = candidate.data.name;
+      if (definitions.has(name)) {
+        throw new Error(`Duplicate command definition detected: ${name}`);
+      }
+      definitions.set(name, candidate);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      registryLogger.warn(`event=command_load_failed file="${file}" message="${message}"`);
     }
-    definitions.set(name, candidate);
+  }
+
+  if (definitions.size === 0) {
+    throw new Error("No command definitions could be loaded.");
   }
 
   return definitions;

@@ -125,6 +125,33 @@ const getLatestMtime = (dirPath) => {
   return latest;
 };
 
+const listCommandSourceFiles = () => {
+  const commandsDir = path.join(ROOT_DIR, "Bot", "src", "commands");
+  if (!fs.existsSync(commandsDir)) {
+    return [];
+  }
+  return fs
+    .readdirSync(commandsDir, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        entry.name.endsWith(".ts") &&
+        !entry.name.endsWith(".d.ts"),
+    )
+    .map((entry) => entry.name);
+};
+
+const getMissingCommandOutputs = () => {
+  const distCommandsDir = path.join(ROOT_DIR, "Bot", "dist", "commands");
+  const sources = listCommandSourceFiles();
+  if (!fs.existsSync(distCommandsDir)) {
+    return sources.map((file) => file.replace(/\.ts$/, ".js"));
+  }
+  return sources
+    .map((file) => file.replace(/\.ts$/, ".js"))
+    .filter((output) => !fs.existsSync(path.join(distCommandsDir, output)));
+};
+
 const needsBuild = () => {
   const packages = ["shared", "Bot", "worker", "worker2"];
   for (const pkg of packages) {
@@ -138,6 +165,9 @@ const needsBuild = () => {
     if (latestDist === 0 || latestSrc > latestDist) {
       return true;
     }
+  }
+  if (getMissingCommandOutputs().length > 0) {
+    return true;
   }
   return false;
 };
