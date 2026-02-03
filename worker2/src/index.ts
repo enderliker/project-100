@@ -5,11 +5,32 @@ import {
   queryPrepared,
   registerGracefulShutdown,
   requeueJob,
-  sendToDeadLetter
+  sendToDeadLetter,
+  startGitAutoPull,
+  startHealthChecker,
+  startHealthServer
 } from "@project/shared";
 import { RedisClient } from "@project/shared";
 
-const REQUIRED_ENV = ["WORKER2_QUEUE_NAME"];
+const REQUIRED_ENV = [
+  "WORKER2_QUEUE_NAME",
+  "WORKER2_DEAD_LETTER_QUEUE",
+  "WORKER2_MAX_ATTEMPTS",
+  "WORKER2_IDEMPOTENCY_TTL_SEC",
+  "WORKER2_BACKOFF_BASE_MS",
+  "HEALTH_HOST",
+  "HEALTH_PORT",
+  "WORKER2_BOT_HEALTH_URL",
+  "HEALTH_CHECK_INTERVAL_MS",
+  "HEALTH_CHECK_TIMEOUT_MS",
+  "GIT_REPO_PATH",
+  "GIT_REMOTE",
+  "GIT_BRANCH",
+  "GIT_AUTOPULL_INTERVAL_MS",
+  "PG_QUERY_MAX_RETRIES",
+  "PG_QUERY_BASE_DELAY_MS",
+  "PG_QUERY_MAX_DELAY_MS"
+];
 const SENSITIVE_ENV = ["REDIS_PASSWORD", "PG_PASSWORD"];
 
 function getRequiredEnv(name: string): string {
@@ -20,11 +41,8 @@ function getRequiredEnv(name: string): string {
   return value;
 }
 
-function parseNumber(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (!raw) {
-    return defaultValue;
-  }
+function parseNumber(name: string): number {
+  const raw = getRequiredEnv(name);
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${name} must be a positive number`);
@@ -51,7 +69,11 @@ function exitWithStartupError(error: unknown, context: string): void {
   process.exit(1);
 }
 
-async function ensureTable(): Promise<void> {
+async function ensureTable(queryOptions: {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+}): Promise<void> {
   const pool = createPostgresPool();
   await queryPrepared(pool, {
     name: "create-table-job-results",
@@ -64,7 +86,7 @@ async function ensureTable(): Promise<void> {
         processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `
-  });
+  }, queryOptions);
   await pool.end();
 }
 
@@ -103,19 +125,41 @@ async function main(): Promise<void> {
   }
 
   console.info("[postgres] connecting");
+  const queryOptions = {
+    maxRetries: parseNumber("PG_QUERY_MAX_RETRIES"),
+    baseDelayMs: parseNumber("PG_QUERY_BASE_DELAY_MS"),
+    maxDelayMs: parseNumber("PG_QUERY_MAX_DELAY_MS")
+  };
+
   try {
-    await ensureTable();
+    await ensureTable(queryOptions);
     console.info("[postgres] connection ready");
   } catch (error) {
     exitWithStartupError(error, "postgres startup failed");
   }
 
   const queueName = getRequiredEnv("WORKER2_QUEUE_NAME");
-  const deadLetterQueue = process.env.WORKER2_DEAD_LETTER_QUEUE ?? "jobs:dead-letter";
-  const maxAttempts = parseNumber("WORKER2_MAX_ATTEMPTS", 5);
-  const idempotencyTtl = parseNumber("WORKER2_IDEMPOTENCY_TTL_SEC", 86400);
-  const baseBackoffMs = parseNumber("WORKER2_BACKOFF_BASE_MS", 500);
+  const deadLetterQueue = getRequiredEnv("WORKER2_DEAD_LETTER_QUEUE");
+  const maxAttempts = parseNumber("WORKER2_MAX_ATTEMPTS");
+  const idempotencyTtl = parseNumber("WORKER2_IDEMPOTENCY_TTL_SEC");
+  const baseBackoffMs = parseNumber("WORKER2_BACKOFF_BASE_MS");
+  const healthHost = getRequiredEnv("HEALTH_HOST");
+  const healthPort = parseNumber("HEALTH_PORT");
+  const botHealthUrl = getRequiredEnv("WORKER2_BOT_HEALTH_URL");
+  const checkerIntervalMs = parseNumber("HEALTH_CHECK_INTERVAL_MS");
+  const checkerTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
+  const gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
+  const gitRemote = getRequiredEnv("GIT_REMOTE");
+  const gitBranch = getRequiredEnv("GIT_BRANCH");
+  const gitIntervalMs = parseNumber("GIT_AUTOPULL_INTERVAL_MS");
   console.info("[startup] config validated");
+
+  startGitAutoPull({
+    repoPath: gitRepoPath,
+    remote: gitRemote,
+    branch: gitBranch,
+    intervalMs: gitIntervalMs
+  });
 
   const redis = createRedisClient();
   const pool = createPostgresPool();
@@ -128,6 +172,21 @@ async function main(): Promise<void> {
     logRedisStartupFailure(error);
     exitWithStartupError(error, "redis startup failed");
   }
+
+  console.info(`[health] starting server host=${healthHost} port=${healthPort}`);
+  const healthServer = startHealthServer("worker2", {
+    port: healthPort,
+    host: healthHost
+  });
+  healthServer.on("listening", () => {
+    console.info(`[health] server listening host=${healthHost} port=${healthPort}`);
+  });
+
+  const checkerUrls = [botHealthUrl];
+  const checkerTimer = startHealthChecker("worker2", checkerUrls, {
+    intervalMs: checkerIntervalMs,
+    timeoutMs: checkerTimeoutMs
+  });
 
   let running = true;
 
@@ -145,14 +204,18 @@ async function main(): Promise<void> {
       }
 
       try {
-        await queryPrepared(pool, {
-          name: "insert-job-result",
-          text: `
-            INSERT INTO job_results (job_id, worker_name, job_type, payload)
-            VALUES ($1, $2, $3, $4)
-          `,
-          values: [job.id, "worker2", job.type, job.payload]
-        });
+        await queryPrepared(
+          pool,
+          {
+            name: "insert-job-result",
+            text: `
+              INSERT INTO job_results (job_id, worker_name, job_type, payload)
+              VALUES ($1, $2, $3, $4)
+            `,
+            values: [job.id, "worker2", job.type, job.payload]
+          },
+          queryOptions
+        );
       } catch (error) {
         job.attempts += 1;
         if (job.attempts >= maxAttempts) {
@@ -172,6 +235,15 @@ async function main(): Promise<void> {
     () => {
       running = false;
     },
+    () => {
+      if (checkerTimer) {
+        clearInterval(checkerTimer);
+      }
+    },
+    () =>
+      new Promise<void>((resolve) => {
+        healthServer.close(() => resolve());
+      }),
     async () => {
       await pool.end();
     },
