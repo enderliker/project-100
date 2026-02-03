@@ -15,7 +15,7 @@ export const command: CommandDefinition = {
       { serviceName: "bot", version },
       {
         title: "Pong",
-        description: `ws \`${wsLatency}ms\` • api \`${latency}ms\` • uptime \`${Math.round(
+        description: `ws \`${wsLatency}ms\` • api \`${latency}ms\` • up \`${Math.round(
           uptimeSeconds
         )}s\``
       }
