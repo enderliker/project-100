@@ -8,8 +8,9 @@
     "shared"
   ],
   "scripts": {
-    "build": "tsc -b",
-    "clean": "tsc -b --clean"
+    "build": "tsc -b && npm run verify:commands",
+    "clean": "tsc -b --clean",
+    "verify:commands": "node scripts/verify-commands.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
