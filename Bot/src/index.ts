@@ -17,7 +17,7 @@ import {
   getLoadMetrics,
   rateLimit,
   registerGracefulShutdown,
-  runGitAutopullOnceOnStartup,
+  runGitUpdateOnce,
   startHealthChecker,
   startHealthServer,
   createLogger
@@ -37,7 +37,6 @@ const REQUIRED_ENV = [
   "GIT_REPO_PATH",
   "GIT_REMOTE",
   "GIT_BRANCH",
-  "GIT_AUTOPULL_INTERVAL_MS",
   "DISCORD_TOKEN",
   "DISCORD_APP_ID"
 ];
@@ -255,7 +254,6 @@ async function main(): Promise<void> {
     gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
     gitRemote = getRequiredEnv("GIT_REMOTE");
     gitBranch = getRequiredEnv("GIT_BRANCH");
-    parseNumber("GIT_AUTOPULL_INTERVAL_MS");
     discordToken = getRequiredEnv("DISCORD_TOKEN");
     discordAppId = getDiscordAppId();
   } catch (error) {
@@ -264,7 +262,7 @@ async function main(): Promise<void> {
 
   startupLogger.info("config validated");
 
-  await runGitAutopullOnceOnStartup({
+  await runGitUpdateOnce({
     repoPath: gitRepoPath,
     remote: gitRemote,
     branch: gitBranch
