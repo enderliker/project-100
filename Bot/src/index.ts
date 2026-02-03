@@ -2,19 +2,32 @@ import http from "http";
 import crypto from "crypto";
 import { Client, GatewayIntentBits } from "discord.js";
 import {
-  createHealthServer,
   createJob,
   createRedisClient,
   enqueueJob,
   getLoadMetrics,
   rateLimit,
-  registerGracefulShutdown
+  registerGracefulShutdown,
+  startGitAutoPull,
+  startHealthChecker,
+  startHealthServer
 } from "@project/shared";
 
 const REQUIRED_ENV = [
   "BOT_PORT",
   "BOT_RATE_LIMIT",
   "BOT_RATE_WINDOW_SEC",
+  "BOT_QUEUE_NAME",
+  "BOT_HOST",
+  "HEALTH_HOST",
+  "HEALTH_PORT",
+  "BOT_CHECK_URLS",
+  "HEALTH_CHECK_INTERVAL_MS",
+  "HEALTH_CHECK_TIMEOUT_MS",
+  "GIT_REPO_PATH",
+  "GIT_REMOTE",
+  "GIT_BRANCH",
+  "GIT_AUTOPULL_INTERVAL_MS",
   "DISCORD_TOKEN",
   "DISCORD_APP_ID"
 ];
@@ -49,11 +62,36 @@ function exitWithStartupError(error: unknown, context: string): void {
 }
 
 function parseNumber(name: string): number {
-  const value = Number(getRequiredEnv(name));
+  const raw = getRequiredEnv(name);
+  const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${name} must be a positive number`);
   }
   return value;
+}
+
+function parseOptionalNumber(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw) {
+    return null;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive number when set`);
+  }
+  return value;
+}
+
+function parseUrlList(name: string): string[] {
+  const raw = getRequiredEnv(name);
+  const urls = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (urls.length === 0) {
+    throw new Error(`${name} must include at least one URL`);
+  }
+  return urls;
 }
 
 function getDiscordAppId(): string {
@@ -129,11 +167,28 @@ async function main(): Promise<void> {
   const port = parseNumber("BOT_PORT");
   const rateLimitMax = parseNumber("BOT_RATE_LIMIT");
   const rateWindow = parseNumber("BOT_RATE_WINDOW_SEC");
-  const queueName = process.env.BOT_QUEUE_NAME ?? "jobs:main";
-  const maxLoad = process.env.BOT_MAX_LOAD1 ? Number(process.env.BOT_MAX_LOAD1) : null;
+  const queueName = getRequiredEnv("BOT_QUEUE_NAME");
+  const maxLoad = parseOptionalNumber("BOT_MAX_LOAD1");
+  const botHost = getRequiredEnv("BOT_HOST");
+  const healthHost = getRequiredEnv("HEALTH_HOST");
+  const healthPort = parseNumber("HEALTH_PORT");
+  const checkerUrls = parseUrlList("BOT_CHECK_URLS");
+  const checkerIntervalMs = parseNumber("HEALTH_CHECK_INTERVAL_MS");
+  const checkerTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
+  const gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
+  const gitRemote = getRequiredEnv("GIT_REMOTE");
+  const gitBranch = getRequiredEnv("GIT_BRANCH");
+  const gitIntervalMs = parseNumber("GIT_AUTOPULL_INTERVAL_MS");
   const discordToken = getRequiredEnv("DISCORD_TOKEN");
   getDiscordAppId();
   console.info("[startup] config validated");
+
+  startGitAutoPull({
+    repoPath: gitRepoPath,
+    remote: gitRemote,
+    branch: gitBranch,
+    intervalMs: gitIntervalMs
+  });
 
   const redis = createRedisClient();
   try {
@@ -211,32 +266,20 @@ async function main(): Promise<void> {
     });
   });
 
-  const host = process.env.BOT_HOST ?? "0.0.0.0";
-  console.info(`[http] starting server host=${host} port=${port}`);
-  server.listen(port, host, () => {
-    console.info(`[http] server listening host=${host} port=${port}`);
+  console.info(`[http] starting server host=${botHost} port=${port}`);
+  server.listen(port, botHost, () => {
+    console.info(`[http] server listening host=${botHost} port=${port}`);
   });
 
-  const healthPort = process.env.HEALTH_PORT
-    ? Number(process.env.HEALTH_PORT)
-    : port + 1;
-  console.info(`[health] starting server host=${host} port=${healthPort}`);
-  const healthServer = createHealthServer({
-    port: healthPort,
-    host,
-    checks: {
-      redis: async () => {
-        try {
-          await redis.ping();
-          return true;
-        } catch {
-          return false;
-        }
-      }
-    }
-  });
+  console.info(`[health] starting server host=${healthHost} port=${healthPort}`);
+  const healthServer = startHealthServer("bot", { port: healthPort, host: healthHost });
   healthServer.on("listening", () => {
-    console.info(`[health] server listening host=${host} port=${healthPort}`);
+    console.info(`[health] server listening host=${healthHost} port=${healthPort}`);
+  });
+
+  const checkerTimer = startHealthChecker("bot", checkerUrls, {
+    intervalMs: checkerIntervalMs,
+    timeoutMs: checkerTimeoutMs
   });
 
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -263,6 +306,11 @@ async function main(): Promise<void> {
       new Promise<void>((resolve) => {
         healthServer.close(() => resolve());
       }),
+    () => {
+      if (checkerTimer) {
+        clearInterval(checkerTimer);
+      }
+    },
     async () => {
       await redis.quit();
     },

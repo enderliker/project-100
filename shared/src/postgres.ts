@@ -12,7 +12,13 @@ const REQUIRED_ENV = [
   "PG_PORT",
   "PG_USER",
   "PG_PASSWORD",
-  "PG_DATABASE"
+  "PG_DATABASE",
+  "PG_POOL_MAX",
+  "PG_IDLE_TIMEOUT_MS",
+  "PG_SSL_REJECT_UNAUTHORIZED",
+  "PG_QUERY_MAX_RETRIES",
+  "PG_QUERY_BASE_DELAY_MS",
+  "PG_QUERY_MAX_DELAY_MS"
 ];
 
 function getRequiredEnv(name: string): string {
@@ -31,8 +37,27 @@ function parsePort(value: string): number {
   return port;
 }
 
+function parsePositiveInteger(name: string): number {
+  const value = Number(getRequiredEnv(name));
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
+function parseBoolean(name: string): boolean {
+  const value = getRequiredEnv(name).toLowerCase();
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error(`${name} must be "true" or "false"`);
+}
+
 function buildSslConfig(): { rejectUnauthorized: boolean; ca?: string } {
-  const rejectUnauthorized = process.env.PG_SSL_REJECT_UNAUTHORIZED !== "false";
+  const rejectUnauthorized = parseBoolean("PG_SSL_REJECT_UNAUTHORIZED");
   const caPath = process.env.PG_CA_PATH;
   if (caPath) {
     const ca = fs.readFileSync(caPath, "utf-8");
@@ -52,8 +77,8 @@ export function createPostgresPool(): Pool {
     user: getRequiredEnv("PG_USER"),
     password: getRequiredEnv("PG_PASSWORD"),
     database: getRequiredEnv("PG_DATABASE"),
-    max: process.env.PG_POOL_MAX ? Number(process.env.PG_POOL_MAX) : 10,
-    idleTimeoutMillis: 30000,
+    max: parsePositiveInteger("PG_POOL_MAX"),
+    idleTimeoutMillis: parsePositiveInteger("PG_IDLE_TIMEOUT_MS"),
     ssl: buildSslConfig()
   });
 
@@ -96,10 +121,21 @@ async function sleep(ms: number): Promise<void> {
 export async function queryPrepared(
   pool: Pool,
   query: PreparedQuery,
-  maxRetries = 3
+  options: { maxRetries: number; baseDelayMs: number; maxDelayMs: number }
 ): Promise<QueryResult> {
   if (!query.name) {
     throw new Error("Prepared statements require a non-empty name");
+  }
+
+  const { maxRetries, baseDelayMs, maxDelayMs } = options;
+  if (!Number.isInteger(maxRetries) || maxRetries <= 0) {
+    throw new Error("PG_QUERY_MAX_RETRIES must be a positive integer");
+  }
+  if (!Number.isInteger(baseDelayMs) || baseDelayMs <= 0) {
+    throw new Error("PG_QUERY_BASE_DELAY_MS must be a positive integer");
+  }
+  if (!Number.isInteger(maxDelayMs) || maxDelayMs <= 0) {
+    throw new Error("PG_QUERY_MAX_DELAY_MS must be a positive integer");
   }
 
   let attempt = 0;
@@ -116,7 +152,7 @@ export async function queryPrepared(
       if (attempt > maxRetries || !isTransientError(error)) {
         throw error;
       }
-      const delay = Math.min(500 * 2 ** attempt, 5000);
+      const delay = Math.min(baseDelayMs * 2 ** attempt, maxDelayMs);
       await sleep(delay);
     }
   }

@@ -3,7 +3,21 @@ import Redis from "ioredis";
 
 export type RedisClient = Redis;
 
-const REQUIRED_ENV = ["REDIS_HOST", "REDIS_PORT"];
+const REQUIRED_ENV = [
+  "REDIS_HOST",
+  "REDIS_PORT",
+  "REDIS_TLS",
+  "REDIS_TLS_REJECT_UNAUTHORIZED",
+  "REDIS_CONNECT_TIMEOUT_MS",
+  "REDIS_ENABLE_READY_CHECK",
+  "REDIS_ENABLE_OFFLINE_QUEUE",
+  "REDIS_LAZY_CONNECT",
+  "REDIS_MAX_RETRIES_PER_REQUEST",
+  "REDIS_RETRY_MAX_ATTEMPT",
+  "REDIS_RETRY_BASE_DELAY_MS",
+  "REDIS_RETRY_JITTER_MS",
+  "REDIS_RETRY_MAX_DELAY_MS"
+];
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -38,20 +52,35 @@ function parseRedisPort(): number {
   return port;
 }
 
+function parseBoolean(name: string): boolean {
+  const value = getRequiredEnv(name).toLowerCase();
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error(`${name} must be "true" or "false"`);
+}
+
+function parsePositiveInteger(name: string): number {
+  const value = Number(getRequiredEnv(name));
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
 function getRedisUsername(): string | undefined {
   return getOptionalEnv("REDIS_USERNAME");
 }
 
 function parseRedisTlsEnabled(): boolean {
-  return process.env.REDIS_TLS === "true";
+  return parseBoolean("REDIS_TLS");
 }
 
 function parseRejectUnauthorized(): boolean {
-  const value = process.env.REDIS_TLS_REJECT_UNAUTHORIZED;
-  if (!value) {
-    return true;
-  }
-  return value === "true";
+  return parseBoolean("REDIS_TLS_REJECT_UNAUTHORIZED");
 }
 
 function logRedisConfig({
@@ -110,22 +139,31 @@ export function createRedisClient(): RedisClient {
     username
   });
 
+  const connectTimeout = parsePositiveInteger("REDIS_CONNECT_TIMEOUT_MS");
+  const enableReadyCheck = parseBoolean("REDIS_ENABLE_READY_CHECK");
+  const enableOfflineQueue = parseBoolean("REDIS_ENABLE_OFFLINE_QUEUE");
+  const lazyConnect = parseBoolean("REDIS_LAZY_CONNECT");
+  const maxRetriesPerRequest = parsePositiveInteger("REDIS_MAX_RETRIES_PER_REQUEST");
+  const retryMaxAttempt = parsePositiveInteger("REDIS_RETRY_MAX_ATTEMPT");
+  const retryBaseDelay = parsePositiveInteger("REDIS_RETRY_BASE_DELAY_MS");
+  const retryJitter = parsePositiveInteger("REDIS_RETRY_JITTER_MS");
+  const retryMaxDelay = parsePositiveInteger("REDIS_RETRY_MAX_DELAY_MS");
+
   const client = new Redis({
     host,
     port,
     ...(password ? { password } : {}),
     ...(tlsOptions ? { tls: tlsOptions } : {}),
     ...(username ? { username } : {}),
-    connectTimeout: 10000,
-    enableReadyCheck: true,
-    enableOfflineQueue: false,
-    lazyConnect: true,
-    maxRetriesPerRequest: 5,
+    connectTimeout,
+    enableReadyCheck,
+    enableOfflineQueue,
+    lazyConnect,
+    maxRetriesPerRequest,
     retryStrategy: (attempt) => {
-      const cappedAttempt = Math.min(attempt, 8);
-      const baseDelay = 250;
-      const jitter = Math.floor(Math.random() * 250);
-      return Math.min(baseDelay * 2 ** cappedAttempt + jitter, 30000);
+      const cappedAttempt = Math.min(attempt, retryMaxAttempt);
+      const jitter = Math.floor(Math.random() * retryJitter);
+      return Math.min(retryBaseDelay * 2 ** cappedAttempt + jitter, retryMaxDelay);
     }
   });
 
