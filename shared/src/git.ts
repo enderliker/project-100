@@ -34,6 +34,11 @@ function formatErrorMessage(error: unknown): string {
 }
 
 export function startGitAutoPull(options: GitAutoPullOptions): NodeJS.Timeout | null {
+  if (autoPullRunning) {
+    console.warn("[git] autopull already running, skipping start");
+    return null;
+  }
+  autoPullRunning = true;
   const { intervalMs, remote, branch, repoPath } = options;
   const repoRoot = path.resolve(process.cwd(), repoPath);
   const gitDir = path.join(repoRoot, ".git");
@@ -84,13 +89,27 @@ export function startGitAutoPull(options: GitAutoPullOptions): NodeJS.Timeout | 
         return;
       }
       const status = await runGit(["status", "--porcelain"], repoRoot);
-      if (status.length > 0) {
-        console.warn("[git] autopull skipped (local changes)");
-        return;
+      const workingTreeDirty = status.length > 0;
+      let stashCreated = false;
+      if (workingTreeDirty) {
+        console.warn("[git] working tree dirty, stashing changes");
+        const timestamp = new Date().toISOString();
+        await runGit(["stash", "push", "-u", "-m", `autopull:${timestamp}`], repoRoot);
+        stashCreated = true;
       }
 
-      await runGit(["pull", "--ff-only", remote, branch], repoRoot);
-      console.info("[git] fast-forward pull applied");
+      try {
+        await runGit(["pull", "--ff-only", remote, branch], repoRoot);
+        console.info("[git] fast-forward pull applied");
+      } finally {
+        if (stashCreated) {
+          try {
+            await runGit(["stash", "pop"], repoRoot);
+          } catch (error) {
+            console.warn("[git] stash apply conflict, manual resolution required");
+          }
+        }
+      }
     } catch (error) {
       console.warn(`[git] autopull failed: ${formatErrorMessage(error)}`);
     }
@@ -101,3 +120,5 @@ export function startGitAutoPull(options: GitAutoPullOptions): NodeJS.Timeout | 
     void runOnce();
   }, intervalMs);
 }
+
+let autoPullRunning = false;
