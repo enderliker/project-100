@@ -134,69 +134,90 @@ const spawnCapture = (command, args, { cwd, timeoutMs } = {}) =>
     });
   });
 
-const runGitCheck = async () => {
-  if (!fs.existsSync(path.join(ROOT_DIR, ".git"))) {
-    log("No .git directory detected; skipping repo update check.");
-    return;
-  }
-
-  log("Checking for repository updates...");
-  await spawnCommand("git", ["fetch", "--all", "--prune"], {
-    cwd: ROOT_DIR,
-    timeoutMs: 15000,
-  });
-
-  const status = await spawnCapture("git", ["status", "--porcelain"], {
-    cwd: ROOT_DIR,
-    timeoutMs: 5000,
-  });
-  const isClean = status.stdout.trim().length === 0;
-
-  let upstream;
-  try {
-    const upstreamResult = await spawnCapture(
-      "git",
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-      { cwd: ROOT_DIR, timeoutMs: 5000 },
-    );
-    upstream = upstreamResult.stdout.trim();
-  } catch (error) {
-    log("No upstream configured; skipping fast-forward pull.");
-    return;
-  }
-
-  const aheadBehind = await spawnCapture(
-    "git",
-    ["rev-list", "--left-right", "--count", `HEAD...${upstream}`],
-    { cwd: ROOT_DIR, timeoutMs: 5000 },
+const startGitAutoPull = () => {
+  const repoPath = process.env.GIT_REPO_PATH || ".";
+  const remote = process.env.GIT_REMOTE || "origin";
+  const branch = process.env.GIT_BRANCH || "main";
+  const intervalMs = Number.parseInt(
+    process.env.GIT_AUTOPULL_INTERVAL_MS || "30000",
+    10,
   );
-  const [ahead, behind] = aheadBehind.stdout
-    .trim()
-    .split(/\s+/)
-    .map((value) => Number.parseInt(value, 10));
+  const normalizedInterval = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 30000;
 
-  if (!isClean) {
-    log("Repository has local changes; skipping fast-forward pull.");
-    return;
-  }
+  const repoRoot = path.resolve(process.cwd(), repoPath);
+  const gitDir = path.join(repoRoot, ".git");
+  let loggedMissing = false;
+  let loggedDetected = false;
+  let loggedUpToDate = false;
 
-  if (behind > 0 && ahead === 0) {
-    log("Fast-forwarding repository to latest upstream.");
-    await spawnCommand("git", ["pull", "--ff-only"], {
-      cwd: ROOT_DIR,
-      timeoutMs: 15000,
-    });
-    return;
-  }
+  const runOnce = async () => {
+    if (!fs.existsSync(gitDir)) {
+      if (!loggedMissing) {
+        console.warn("[git] .git not found, autopull disabled");
+        loggedMissing = true;
+      }
+      return;
+    }
 
-  if (ahead > 0 && behind > 0) {
-    log("Repository has diverged from upstream; skipping pull.");
-    return;
-  }
+    if (!loggedDetected) {
+      console.info("[git] repo detected");
+      loggedDetected = true;
+    }
 
-  if (behind === 0) {
-    log("Repository is up to date.");
-  }
+    try {
+      console.info(`[git] fetching ${remote}/${branch}`);
+      await spawnCommand("git", ["fetch", remote], {
+        cwd: repoRoot,
+        timeoutMs: 15000,
+      });
+
+      const revList = await spawnCapture(
+        "git",
+        ["rev-list", "--left-right", "--count", `HEAD...${remote}/${branch}`],
+        { cwd: repoRoot, timeoutMs: 5000 },
+      );
+      const [aheadRaw, behindRaw] = revList.stdout.trim().split(/\s+/);
+      const aheadParsed = Number.parseInt(aheadRaw || "0", 10);
+      const behindParsed = Number.parseInt(behindRaw || "0", 10);
+      const ahead = Number.isFinite(aheadParsed) ? aheadParsed : 0;
+      const behind = Number.isFinite(behindParsed) ? behindParsed : 0;
+
+      if (behind === 0 && ahead === 0) {
+        if (!loggedUpToDate) {
+          console.info("[git] repo up to date");
+          loggedUpToDate = true;
+        }
+        return;
+      }
+
+      loggedUpToDate = false;
+      if (behind === 0) {
+        return;
+      }
+      const status = await spawnCapture("git", ["status", "--porcelain"], {
+        cwd: repoRoot,
+        timeoutMs: 5000,
+      });
+      if (status.stdout.trim().length > 0) {
+        console.warn("[git] autopull skipped (local changes)");
+        return;
+      }
+
+      await spawnCommand("git", ["pull", "--ff-only", remote, branch], {
+        cwd: repoRoot,
+        timeoutMs: 15000,
+      });
+      console.info("[git] fast-forward pull applied");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[git] autopull failed: ${message}`);
+    }
+  };
+
+  void runOnce();
+  return setInterval(() => {
+    void runOnce();
+  }, normalizedInterval);
 };
 
 const runHealthcheck = async () => {
@@ -296,7 +317,7 @@ const validateServiceMode = () => {
 const main = async () => {
   loadEnv();
   const serviceMode = validateServiceMode();
-  await runGitCheck();
+  startGitAutoPull();
   await runHealthcheck();
   await installDependencies();
   await runBuildIfNeeded();

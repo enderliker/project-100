@@ -20,24 +20,9 @@ async function runGit(args: string[], cwd: string): Promise<string> {
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     const stats = await fs.stat(targetPath);
-    return stats.isDirectory();
+    return stats.isDirectory() || stats.isFile();
   } catch {
     return false;
-  }
-}
-
-async function findGitRoot(startPath: string): Promise<string | null> {
-  let current = path.resolve(startPath);
-  while (true) {
-    const gitPath = path.join(current, ".git");
-    if (await pathExists(gitPath)) {
-      return current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
   }
 }
 
@@ -50,39 +35,62 @@ function formatErrorMessage(error: unknown): string {
 
 export function startGitAutoPull(options: GitAutoPullOptions): NodeJS.Timeout | null {
   const { intervalMs, remote, branch, repoPath } = options;
+  const repoRoot = path.resolve(process.cwd(), repoPath);
+  const gitDir = path.join(repoRoot, ".git");
 
-  let gitRoot: string | null = null;
   let loggedMissing = false;
+  let loggedDetected = false;
+  let loggedUpToDate = false;
 
   const runOnce = async (): Promise<void> => {
-    if (!gitRoot) {
-      gitRoot = await findGitRoot(repoPath);
-      if (!gitRoot) {
-        if (!loggedMissing) {
-          console.warn("[git] .git not found, skipping pull");
-          loggedMissing = true;
-        }
-        return;
+    const hasGit = await pathExists(gitDir);
+    if (!hasGit) {
+      if (!loggedMissing) {
+        console.warn("[git] .git not found, autopull disabled");
+        loggedMissing = true;
       }
+      return;
+    }
+
+    if (!loggedDetected) {
+      console.info("[git] repo detected");
+      loggedDetected = true;
     }
 
     try {
-      await runGit(["fetch", remote], gitRoot);
-      const localHead = await runGit(["rev-parse", "HEAD"], gitRoot);
-      const remoteHead = await runGit(["rev-parse", `${remote}/${branch}`], gitRoot);
-      if (localHead === remoteHead) {
-        console.info("[git] repository up to date");
+      console.info(`[git] fetching ${remote}/${branch}`);
+      await runGit(["fetch", remote], repoRoot);
+
+      const revList = await runGit(
+        ["rev-list", "--left-right", "--count", `HEAD...${remote}/${branch}`],
+        repoRoot
+      );
+      const [aheadRaw, behindRaw] = revList.split(/\s+/);
+      const aheadParsed = Number.parseInt(aheadRaw ?? "0", 10);
+      const behindParsed = Number.parseInt(behindRaw ?? "0", 10);
+      const ahead = Number.isFinite(aheadParsed) ? aheadParsed : 0;
+      const behind = Number.isFinite(behindParsed) ? behindParsed : 0;
+
+      if (behind === 0 && ahead === 0) {
+        if (!loggedUpToDate) {
+          console.info("[git] repo up to date");
+          loggedUpToDate = true;
+        }
         return;
       }
 
-      const status = await runGit(["status", "--porcelain"], gitRoot);
+      loggedUpToDate = false;
+      if (behind === 0) {
+        return;
+      }
+      const status = await runGit(["status", "--porcelain"], repoRoot);
       if (status.length > 0) {
-        console.warn("[git] local changes detected, skipping pull");
+        console.warn("[git] autopull skipped (local changes)");
         return;
       }
 
-      await runGit(["pull", "--ff-only", remote, branch], gitRoot);
-      console.info("[git] pulled latest changes");
+      await runGit(["pull", "--ff-only", remote, branch], repoRoot);
+      console.info("[git] fast-forward pull applied");
     } catch (error) {
       console.warn(`[git] autopull failed: ${formatErrorMessage(error)}`);
     }
