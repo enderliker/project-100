@@ -2,13 +2,7 @@ import http from "http";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import {
-  Client,
-  GatewayIntentBits,
-  REST,
-  Routes,
-  SlashCommandBuilder
-} from "discord.js";
+import { Client, GatewayIntentBits, REST, Routes } from "discord.js";
 import {
   createJob,
   createPostgresPool,
@@ -27,10 +21,10 @@ import {
   checkRemoteService
 } from "@project/shared";
 import { execFileSync } from "child_process";
-import { URL } from "url";
+import { URL, pathToFileURL } from "url";
 import { buildBaseEmbed } from "./embeds";
-import { buildStatusEmbed, fetchStatusSnapshot } from "./status";
 import { Pool } from "pg";
+import type { CommandDefinition, CommandExecutionContext } from "./commands/types";
 
 const REQUIRED_ENV = [
   "BOT_PORT",
@@ -301,6 +295,83 @@ function deriveBotState(
   serviceState.setState("READY");
 }
 
+function isCommandDefinition(value: unknown): value is CommandDefinition {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as { data?: unknown; execute?: unknown };
+  if (typeof record.execute !== "function") {
+    return false;
+  }
+  if (typeof record.data !== "object" || record.data === null) {
+    return false;
+  }
+  const dataRecord = record.data as { toJSON?: unknown; name?: unknown };
+  if (typeof dataRecord.toJSON !== "function") {
+    return false;
+  }
+  if (typeof dataRecord.name !== "string" || dataRecord.name.length === 0) {
+    return false;
+  }
+  return true;
+}
+
+async function loadCommandDefinitions(
+  commandsDir: string
+): Promise<Map<string, CommandDefinition>> {
+  if (!fs.existsSync(commandsDir)) {
+    throw new Error(`Commands directory not found: ${commandsDir}`);
+  }
+
+  const entries = fs.readdirSync(commandsDir, { withFileTypes: true });
+  const files = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .map((entry) => entry.name)
+    .sort();
+
+  const definitions = new Map<string, CommandDefinition>();
+  for (const file of files) {
+    const modulePath = path.join(commandsDir, file);
+    const moduleUrl = pathToFileURL(modulePath).toString();
+    const loaded = await import(moduleUrl);
+    const candidate = (loaded as { command?: unknown; default?: unknown }).command ??
+      (loaded as { command?: unknown; default?: unknown }).default;
+
+    if (!isCommandDefinition(candidate)) {
+      throw new Error(`Invalid command module: ${file}`);
+    }
+
+    const name = candidate.data.name;
+    if (definitions.has(name)) {
+      throw new Error(`Duplicate command definition detected: ${name}`);
+    }
+    definitions.set(name, candidate);
+  }
+
+  return definitions;
+}
+
+async function reloadDiscordCommands({
+  commandsDir,
+  rest,
+  discordAppId
+}: {
+  commandsDir: string;
+  rest: REST;
+  discordAppId: string;
+}): Promise<Map<string, CommandDefinition>> {
+  discordLogger.info(`event=command_reload_start directory="${commandsDir}"`);
+  const definitions = await loadCommandDefinitions(commandsDir);
+  discordLogger.info(`event=command_discovered count=${definitions.size}`);
+
+  const payload = Array.from(definitions.values()).map((command) => command.data.toJSON());
+  await rest.put(Routes.applicationCommands(discordAppId), { body: payload });
+
+  discordLogger.info(`event=command_registered count=${payload.length}`);
+  discordLogger.info("event=command_reload_complete");
+  return definitions;
+}
+
 async function main(): Promise<void> {
   startupLogger.info("event=env_loaded");
 
@@ -560,12 +631,33 @@ async function main(): Promise<void> {
     });
   });
 
-  const commands = [
-    new SlashCommandBuilder().setName("ping").setDescription("Check bot latency"),
-    new SlashCommandBuilder().setName("status").setDescription("Show service status")
-  ].map((command) => command.toJSON());
   const rest = new REST({ version: "10" }).setToken(discordToken);
-  await rest.put(Routes.applicationCommands(discordAppId), { body: commands });
+  const commandsDir = path.join(__dirname, "commands");
+  let commandDefinitions: Map<string, CommandDefinition>;
+  try {
+    commandDefinitions = await reloadDiscordCommands({
+      commandsDir,
+      rest,
+      discordAppId
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    discordLogger.fatal(`event=command_reload_failed message="${message}"`);
+    throw error;
+  }
+
+  const commandContext: CommandExecutionContext = {
+    client,
+    gitRepoPath,
+    workerHealthUrl,
+    worker2HealthUrl,
+    statusCheckTimeoutMs,
+    statusCheckRetries,
+    redis,
+    postgresPool,
+    serviceMode: process.env.SERVICE_MODE ?? "bot",
+    getVersion: () => loadVersionInfo(gitRepoPath)
+  };
 
   client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) {
@@ -573,52 +665,14 @@ async function main(): Promise<void> {
     }
 
     try {
-      const version = loadVersionInfo(gitRepoPath);
-      const embedContext = { serviceName: "bot", version };
-
-      if (interaction.commandName === "ping") {
-        const latency = Date.now() - interaction.createdTimestamp;
-        const wsLatency = client.ws.ping;
-        const uptimeSeconds = process.uptime();
-        const embed = buildBaseEmbed(embedContext, {
-          title: "Pong",
-          description: `ws \`${wsLatency}ms\` • api \`${latency}ms\` • uptime \`${Math.round(
-            uptimeSeconds
-          )}s\``
-        });
-        await interaction.reply({ embeds: [embed] });
+      const command = commandDefinitions.get(interaction.commandName);
+      if (!command) {
         return;
       }
-
-      if (interaction.commandName === "status") {
-        const snapshot = await fetchStatusSnapshot({
-          workerUrl: workerHealthUrl ?? undefined,
-          worker2Url: worker2HealthUrl ?? undefined,
-          timeoutMs: statusCheckTimeoutMs,
-          retries: statusCheckRetries
-        });
-
-        const redisHealth = await checkRedisHealth(redis, statusCheckTimeoutMs);
-        const postgresHealth = postgresPool
-          ? await checkPostgresHealth(postgresPool, statusCheckTimeoutMs)
-          : null;
-
-        const embed = buildStatusEmbed(
-          embedContext,
-          {
-            serviceMode: process.env.SERVICE_MODE ?? "bot",
-            uptimeSeconds: process.uptime(),
-            redisConnected: redisHealth.ok,
-            postgresConnected: postgresHealth ? postgresHealth.ok : null,
-            version
-          },
-          snapshot
-        );
-        await interaction.reply({ embeds: [embed] });
-      }
+      await command.execute(interaction, commandContext);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
-      const version = loadVersionInfo(gitRepoPath);
+      const version = commandContext.getVersion();
       const embed = buildBaseEmbed(
         { serviceName: "bot", version },
         {
