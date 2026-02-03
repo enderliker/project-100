@@ -1,5 +1,6 @@
 import http from "http";
 import crypto from "crypto";
+import { Client, GatewayIntentBits } from "discord.js";
 import {
   createHealthServer,
   createJob,
@@ -18,12 +19,33 @@ const REQUIRED_ENV = [
   "DISCORD_APP_ID"
 ];
 
+const SENSITIVE_ENV = ["DISCORD_TOKEN", "REDIS_PASSWORD", "PG_PASSWORD"];
+
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
   return value;
+}
+
+function sanitizeErrorStack(stack: string): string {
+  let sanitized = stack;
+  for (const name of SENSITIVE_ENV) {
+    const value = process.env[name];
+    if (value) {
+      sanitized = sanitized.split(value).join("***");
+    }
+  }
+  return sanitized;
+}
+
+function exitWithStartupError(error: unknown, context: string): void {
+  const stack =
+    error instanceof Error ? error.stack ?? error.message : String(error);
+  console.error(`[startup] ${context}`);
+  console.error(sanitizeErrorStack(stack));
+  process.exit(1);
 }
 
 function parseNumber(name: string): number {
@@ -98,6 +120,8 @@ function parsePayload(body: string): {
 }
 
 async function main(): Promise<void> {
+  console.info("[startup] env loaded");
+
   for (const env of REQUIRED_ENV) {
     getRequiredEnv(env);
   }
@@ -107,15 +131,19 @@ async function main(): Promise<void> {
   const rateWindow = parseNumber("BOT_RATE_WINDOW_SEC");
   const queueName = process.env.BOT_QUEUE_NAME ?? "jobs:main";
   const maxLoad = process.env.BOT_MAX_LOAD1 ? Number(process.env.BOT_MAX_LOAD1) : null;
+  const discordToken = getRequiredEnv("DISCORD_TOKEN");
   getDiscordAppId();
+  console.info("[startup] config validated");
 
   const redis = createRedisClient();
   try {
+    console.info("[redis] connecting");
     await redis.connect();
     await redis.ping();
+    console.info("[redis] connection ready (ping ok)");
   } catch (error) {
     logRedisStartupFailure(error);
-    process.exit(1);
+    exitWithStartupError(error, "redis startup failed");
   }
 
   const server = http.createServer(async (req, res) => {
@@ -183,13 +211,19 @@ async function main(): Promise<void> {
     });
   });
 
-  server.listen(port);
+  const host = process.env.BOT_HOST ?? "0.0.0.0";
+  console.info(`[http] starting server host=${host} port=${port}`);
+  server.listen(port, host, () => {
+    console.info(`[http] server listening host=${host} port=${port}`);
+  });
 
   const healthPort = process.env.HEALTH_PORT
     ? Number(process.env.HEALTH_PORT)
     : port + 1;
+  console.info(`[health] starting server host=${host} port=${healthPort}`);
   const healthServer = createHealthServer({
     port: healthPort,
+    host,
     checks: {
       redis: async () => {
         try {
@@ -201,6 +235,24 @@ async function main(): Promise<void> {
       }
     }
   });
+  healthServer.on("listening", () => {
+    console.info(`[health] server listening host=${host} port=${healthPort}`);
+  });
+
+  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const readyPromise = new Promise<void>((resolve, reject) => {
+    client.once("ready", () => {
+      console.info("[discord] ready");
+      resolve();
+    });
+    client.once("error", (error) => {
+      reject(error);
+    });
+  });
+
+  console.info("[discord] login starting");
+  await client.login(discordToken);
+  await readyPromise;
 
   registerGracefulShutdown([
     () =>
@@ -213,8 +265,13 @@ async function main(): Promise<void> {
       }),
     async () => {
       await redis.quit();
+    },
+    async () => {
+      client.destroy();
     }
   ]);
 }
 
-void main();
+void main().catch((error) => {
+  exitWithStartupError(error, "startup failed");
+});

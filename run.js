@@ -7,6 +7,7 @@ const dotenv = require("dotenv");
 const LOG_PREFIX = "[entrypoint]";
 const ROOT_DIR = process.cwd();
 const SERVICE_MODES = new Set(["bot", "worker", "worker2"]);
+const SENSITIVE_ENV = ["DISCORD_TOKEN", "REDIS_PASSWORD", "PG_PASSWORD"];
 
 const log = (message) => {
   console.log(`${LOG_PREFIX} ${message}`);
@@ -14,6 +15,23 @@ const log = (message) => {
 
 const logError = (message) => {
   console.error(`${LOG_PREFIX} ${message}`);
+};
+
+const sanitizeErrorStack = (stack) => {
+  let sanitized = stack;
+  for (const name of SENSITIVE_ENV) {
+    const value = process.env[name];
+    if (value) {
+      sanitized = sanitized.split(value).join("***");
+    }
+  }
+  return sanitized;
+};
+
+const logErrorStack = (error) => {
+  const stack =
+    error instanceof Error ? error.stack || error.message : String(error);
+  console.error(`${LOG_PREFIX} ${sanitizeErrorStack(stack)}`);
 };
 
 const loadEnv = () => {
@@ -287,15 +305,18 @@ const main = async () => {
 
 process.on("unhandledRejection", (error) => {
   logError(error instanceof Error ? error.message : String(error));
+  logErrorStack(error);
   process.exit(1);
 });
 
 process.on("uncaughtException", (error) => {
   logError(error.message);
+  logErrorStack(error);
   process.exit(1);
 });
 
 main().catch((error) => {
   logError(error.message);
+  logErrorStack(error);
   process.exit(1);
 });

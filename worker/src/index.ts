@@ -10,6 +10,7 @@ import {
 import { RedisClient } from "@project/shared";
 
 const REQUIRED_ENV = ["WORKER_QUEUE_NAME"];
+const SENSITIVE_ENV = ["REDIS_PASSWORD", "PG_PASSWORD"];
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -29,6 +30,25 @@ function parseNumber(name: string, defaultValue: number): number {
     throw new Error(`${name} must be a positive number`);
   }
   return value;
+}
+
+function sanitizeErrorStack(stack: string): string {
+  let sanitized = stack;
+  for (const name of SENSITIVE_ENV) {
+    const value = process.env[name];
+    if (value) {
+      sanitized = sanitized.split(value).join("***");
+    }
+  }
+  return sanitized;
+}
+
+function exitWithStartupError(error: unknown, context: string): void {
+  const stack =
+    error instanceof Error ? error.stack ?? error.message : String(error);
+  console.error(`[startup] ${context}`);
+  console.error(sanitizeErrorStack(stack));
+  process.exit(1);
 }
 
 async function ensureTable(): Promise<void> {
@@ -76,26 +96,37 @@ function logRedisStartupFailure(error: unknown): void {
 }
 
 async function main(): Promise<void> {
+  console.info("[startup] env loaded");
+
   for (const env of REQUIRED_ENV) {
     getRequiredEnv(env);
   }
 
-  await ensureTable();
+  console.info("[postgres] connecting");
+  try {
+    await ensureTable();
+    console.info("[postgres] connection ready");
+  } catch (error) {
+    exitWithStartupError(error, "postgres startup failed");
+  }
 
   const queueName = getRequiredEnv("WORKER_QUEUE_NAME");
   const deadLetterQueue = process.env.WORKER_DEAD_LETTER_QUEUE ?? "jobs:dead-letter";
   const maxAttempts = parseNumber("WORKER_MAX_ATTEMPTS", 5);
   const idempotencyTtl = parseNumber("WORKER_IDEMPOTENCY_TTL_SEC", 86400);
   const baseBackoffMs = parseNumber("WORKER_BACKOFF_BASE_MS", 500);
+  console.info("[startup] config validated");
 
   const redis = createRedisClient();
   const pool = createPostgresPool();
   try {
+    console.info("[redis] connecting");
     await redis.connect();
     await redis.ping();
+    console.info("[redis] connection ready (ping ok)");
   } catch (error) {
     logRedisStartupFailure(error);
-    process.exit(1);
+    exitWithStartupError(error, "redis startup failed");
   }
 
   let running = true;
@@ -150,4 +181,6 @@ async function main(): Promise<void> {
   ]);
 }
 
-void main();
+void main().catch((error) => {
+  exitWithStartupError(error, "startup failed");
+});
