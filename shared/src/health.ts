@@ -4,6 +4,7 @@ export type HealthCheck = () => Promise<boolean> | boolean;
 
 interface HealthServerOptions {
   port: number;
+  host?: string;
   checks: Record<string, HealthCheck>;
 }
 
@@ -41,6 +42,6 @@ export function createHealthServer(options: HealthServerOptions): http.Server {
     res.end();
   });
 
-  server.listen(options.port);
+  server.listen(options.port, options.host ?? "0.0.0.0");
   return server;
 }
