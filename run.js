@@ -94,35 +94,9 @@ const runHealthcheck = async () => {
 const installDependencies = async () => {
   log("Installing dependencies...");
   const hasLockfile = fs.existsSync(path.join(ROOT_DIR, "package-lock.json"));
-  const buildRequired = needsBuild();
   const args = hasLockfile ? ["ci"] : ["install"];
 
-  if (buildRequired) {
-    log("Build required; installing dev dependencies for TypeScript build.");
-  } else {
-    args.push("--omit=dev");
-  }
-
   await spawnCommand("npm", args, { cwd: ROOT_DIR });
-};
-
-const getLatestMtime = (dirPath) => {
-  if (!fs.existsSync(dirPath)) {
-    return 0;
-  }
-
-  let latest = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      latest = Math.max(latest, getLatestMtime(fullPath));
-      continue;
-    }
-    const stat = fs.statSync(fullPath);
-    latest = Math.max(latest, stat.mtimeMs);
-  }
-  return latest;
 };
 
 const listCommandSourceFiles = () => {
@@ -152,33 +126,64 @@ const getMissingCommandOutputs = () => {
     .filter((output) => !fs.existsSync(path.join(distCommandsDir, output)));
 };
 
-const needsBuild = () => {
-  const packages = ["shared", "Bot", "worker", "worker2"];
-  for (const pkg of packages) {
-    const srcDir = path.join(ROOT_DIR, pkg, "src");
-    const distDir = path.join(ROOT_DIR, pkg, "dist");
-    if (!fs.existsSync(distDir)) {
-      return true;
-    }
-    const latestSrc = getLatestMtime(srcDir);
-    const latestDist = getLatestMtime(distDir);
-    if (latestDist === 0 || latestSrc > latestDist) {
-      return true;
+const runBuildIfNeeded = async () => {
+  const rootPackagePath = path.join(ROOT_DIR, "package.json");
+  let buildArgs = ["run", "build"];
+  let buildReason =
+    "defaulting to root build script for Bot build (package.json not found).";
+
+  if (fs.existsSync(rootPackagePath)) {
+    const rootPackage = JSON.parse(fs.readFileSync(rootPackagePath, "utf-8"));
+    const workspaces = Array.isArray(rootPackage.workspaces)
+      ? rootPackage.workspaces
+      : [];
+    if (workspaces.includes("Bot")) {
+      buildReason =
+        "root package.json defines workspaces including Bot; using root build script to compile Bot and shared dependencies.";
+    } else {
+      buildReason =
+        "root package.json has no Bot workspace entry; using root build script.";
     }
   }
-  if (getMissingCommandOutputs().length > 0) {
-    return true;
-  }
-  return false;
+
+  log(`Running build: npm ${buildArgs.join(" ")} (${buildReason})`);
+  await spawnCommand("npm", buildArgs, { cwd: ROOT_DIR });
 };
 
-const runBuildIfNeeded = async () => {
-  if (!needsBuild()) {
-    log("Build output is up to date; skipping build.");
-    return;
+const validateBuildOutputs = () => {
+  const distCommandsDir = path.join(ROOT_DIR, "Bot", "dist", "commands");
+  if (!fs.existsSync(distCommandsDir)) {
+    throw new Error(
+      "Build did not produce Bot/dist/commands. Ensure the Bot build outputs command modules.",
+    );
   }
-  log("Building TypeScript outputs...");
-  await spawnCommand("npm", ["run", "build"], { cwd: ROOT_DIR });
+
+  const entries = fs
+    .readdirSync(distCommandsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile());
+
+  if (entries.length === 0) {
+    throw new Error(
+      "Bot/dist/commands is empty after build; expected compiled command modules.",
+    );
+  }
+
+  const missingOutputs = getMissingCommandOutputs();
+  if (missingOutputs.length > 0) {
+    throw new Error(
+      `Missing compiled command modules after build: ${missingOutputs.join(
+        ", ",
+      )}`,
+    );
+  }
+
+  const distIndexPath = path.join(ROOT_DIR, "Bot", "dist", "index.js");
+  const distIndexAltPath = path.join(ROOT_DIR, "Bot", "dist", "src", "index.js");
+  if (!fs.existsSync(distIndexPath) && !fs.existsSync(distIndexAltPath)) {
+    throw new Error(
+      "Build did not produce Bot/dist/index.js (or Bot/dist/src/index.js).",
+    );
+  }
 };
 
 const resolveServiceEntry = (serviceDir) => {
@@ -220,6 +225,7 @@ const main = async () => {
   await runHealthcheck();
   await installDependencies();
   await runBuildIfNeeded();
+  validateBuildOutputs();
   await runService(serviceMode);
 };
 
