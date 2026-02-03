@@ -1,4 +1,8 @@
+import { createLogger } from "./logger";
+
 export type ShutdownHandler = () => Promise<void> | void;
+
+const logger = createLogger("startup");
 
 export function registerGracefulShutdown(handlers: ShutdownHandler[]): void {
   let shuttingDown = false;
@@ -12,7 +16,7 @@ export function registerGracefulShutdown(handlers: ShutdownHandler[]): void {
       try {
         await Promise.resolve(handler());
       } catch (error) {
-        console.error(`Shutdown handler error after ${signal}`);
+        logger.error(`shutdown handler error after ${signal}`);
       }
     }
     process.exit(0);

@@ -5,4 +5,5 @@ export * from "./rateLimit";
 export * from "./health";
 export * from "./load";
 export * from "./shutdown";
-export * from "./git";
+export * from "./gitAutopull";
+export * from "./logger";
