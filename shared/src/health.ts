@@ -14,6 +14,7 @@ export interface HealthServerOptions {
   port: number;
   host: string;
   serviceName: string;
+  getVersion?: () => string;
   getState: () => ServiceStateSnapshot;
   deriveState?: (checks: Record<string, HealthCheckResult>) => ServiceStateSnapshot;
   checks: Record<string, HealthCheck>;
@@ -39,7 +40,28 @@ async function runChecks(
 
 export function startHealthServer(options: HealthServerOptions): http.Server {
   const server = http.createServer(async (req, res) => {
-    if (req.method !== "GET" || req.url !== "/healthz") {
+    if (req.method !== "GET") {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+
+    const version = options.getVersion?.() ?? "unknown";
+    const baseResponse = {
+      ok: true,
+      service: options.serviceName,
+      uptime_s: Math.round(process.uptime()),
+      version
+    };
+
+    if (req.url === "/healthz") {
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(baseResponse));
+      return;
+    }
+
+    if (req.url !== "/readyz") {
       res.statusCode = 404;
       res.end();
       return;
@@ -54,8 +76,8 @@ export function startHealthServer(options: HealthServerOptions): http.Server {
     res.setHeader("Content-Type", "application/json");
     res.end(
       JSON.stringify({
+        ...baseResponse,
         ok,
-        service: options.serviceName,
         state,
         checks,
         timestamp: new Date().toISOString()
