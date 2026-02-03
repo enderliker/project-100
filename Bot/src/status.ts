@@ -95,33 +95,33 @@ export function buildStatusEmbed(
         : "`down`";
 
   const embed = buildBaseEmbed(context, {
-    title: "Service Status",
-    description: `mode \`${deps.serviceMode}\``
+    title: "Status",
+    description: `mode \`${deps.serviceMode}\` • uptime \`${uptime}\``
   }).setFields([
     {
       name: "Bot",
-      value: `\`up\` • uptime \`${uptime}\` • version \`${deps.version}\``,
-      inline: false
+      value: `\`up\` • v\`${deps.version}\``,
+      inline: true
     },
     {
       name: "Worker",
       value: formatServiceValue(snapshot.worker),
-      inline: false
+      inline: true
     },
     {
       name: "Worker2",
       value: formatServiceValue(snapshot.worker2),
-      inline: false
+      inline: true
     },
     {
       name: "Redis",
       value: deps.redisConnected ? "`up`" : "`down`",
-      inline: false
+      inline: true
     },
     {
       name: "Postgres",
       value: postgresValue,
-      inline: false
+      inline: true
     }
   ]);
 
