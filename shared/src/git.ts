@@ -34,33 +34,23 @@ function formatErrorMessage(error: unknown): string {
 }
 
 export function startGitAutoPull(options: GitAutoPullOptions): NodeJS.Timeout | null {
-  if (autoPullRunning) {
-    console.warn("[git] autopull already running, skipping start");
+  if (autoPullExecuted) {
+    console.warn("[git] autopull already executed, skipping");
     return null;
   }
-  autoPullRunning = true;
-  const { intervalMs, remote, branch, repoPath } = options;
+  autoPullExecuted = true;
+  const { remote, branch, repoPath } = options;
   const repoRoot = path.resolve(process.cwd(), repoPath);
   const gitDir = path.join(repoRoot, ".git");
-
-  let loggedMissing = false;
-  let loggedDetected = false;
-  let loggedUpToDate = false;
 
   const runOnce = async (): Promise<void> => {
     const hasGit = await pathExists(gitDir);
     if (!hasGit) {
-      if (!loggedMissing) {
-        console.warn("[git] .git not found, autopull disabled");
-        loggedMissing = true;
-      }
+      console.warn("[git] .git not found, autopull disabled");
       return;
     }
 
-    if (!loggedDetected) {
-      console.info("[git] repo detected");
-      loggedDetected = true;
-    }
+    console.info("[git] repo detected");
 
     try {
       console.info(`[git] fetching ${remote}/${branch}`);
@@ -77,14 +67,10 @@ export function startGitAutoPull(options: GitAutoPullOptions): NodeJS.Timeout | 
       const behind = Number.isFinite(behindParsed) ? behindParsed : 0;
 
       if (behind === 0 && ahead === 0) {
-        if (!loggedUpToDate) {
-          console.info("[git] repo up to date");
-          loggedUpToDate = true;
-        }
+        console.info("[git] repo up to date");
         return;
       }
 
-      loggedUpToDate = false;
       if (behind === 0) {
         return;
       }
@@ -115,10 +101,11 @@ export function startGitAutoPull(options: GitAutoPullOptions): NodeJS.Timeout | 
     }
   };
 
-  void runOnce();
-  return setInterval(() => {
-    void runOnce();
-  }, intervalMs);
+  void (async () => {
+    await runOnce();
+    console.info("[git] autopull executed on startup");
+  })();
+  return null;
 }
 
-let autoPullRunning = false;
+let autoPullExecuted = false;
