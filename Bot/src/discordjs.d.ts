@@ -10,7 +10,15 @@ declare module "discord.js" {
   export interface ChatInputCommandInteraction extends Interaction {
     commandName: string;
     createdTimestamp: number;
-    reply(message: string): Promise<void>;
+    deferred?: boolean;
+    replied?: boolean;
+    reply(message: string | InteractionReplyOptions): Promise<void>;
+    followUp(message: string | InteractionReplyOptions): Promise<void>;
+  }
+
+  export interface InteractionReplyOptions {
+    embeds?: unknown[];
+    ephemeral?: boolean;
   }
 
   export class Client {

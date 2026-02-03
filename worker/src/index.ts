@@ -1,6 +1,8 @@
 import {
   createPostgresPool,
   createRedisClient,
+  checkPostgresHealth,
+  checkRedisHealth,
   dequeueJob,
   parsePgQueryMaxRetries,
   queryPrepared,
@@ -11,9 +13,11 @@ import {
   startHealthServer,
   createLogger,
   checkRemoteService,
-  normalizeStatusCheckOptions
+  normalizeStatusCheckOptions,
+  ServiceStateTracker
 } from "@project/shared";
 import { RedisClient } from "@project/shared";
+import { URL } from "url";
 
 const REQUIRED_ENV = [
   "WORKER_QUEUE_NAME",
@@ -66,6 +70,24 @@ function parseOptionalNumber(name: string): number | null {
   return value;
 }
 
+function parseOptionalUrl(name: string): string | null {
+  const raw = process.env[name];
+  if (!raw) {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    // eslint-disable-next-line no-new
+    new URL(trimmed);
+    return trimmed;
+  } catch {
+    throw new Error(`${name} must be a valid URL when set`);
+  }
+}
+
 function sanitizeErrorStack(stack: string): string {
   let sanitized = stack;
   for (const name of SENSITIVE_ENV) {
@@ -80,14 +102,14 @@ function sanitizeErrorStack(stack: string): string {
 function exitWithStartupError(error: unknown, context: string): void {
   const stack =
     error instanceof Error ? error.stack ?? error.message : String(error);
-  startupLogger.error(context);
-  startupLogger.error(sanitizeErrorStack(stack));
+  startupLogger.fatal(`event=startup_failed context="${context}"`);
+  startupLogger.fatal(`stack="${sanitizeErrorStack(stack)}"`);
   process.exit(1);
 }
 
 function exitWithConfigError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
-  startupLogger.error(`config invalid: ${message}`);
+  startupLogger.fatal(`event=config_invalid message="${message}"`);
   process.exit(1);
 }
 
@@ -140,7 +162,7 @@ function logRedisStartupFailure(error: unknown): void {
 }
 
 async function main(): Promise<void> {
-  startupLogger.info("env loaded");
+  startupLogger.info("event=env_loaded");
 
   let queryOptions: {
     maxRetries: number;
@@ -155,6 +177,7 @@ async function main(): Promise<void> {
   let healthHost: string;
   let healthPort: number;
   let botHealthUrl: string | null;
+  let healthCheckTimeoutMs: number;
   let statusCheckTimeoutMs: number;
   let statusCheckRetries: number;
   let gitRepoPath: string;
@@ -180,9 +203,11 @@ async function main(): Promise<void> {
     healthHost = getRequiredEnv("HEALTH_HOST");
     healthPort = parseNumber("HEALTH_PORT");
     botHealthUrl =
-      process.env.BOT_HEALTH_URL ?? process.env.WORKER_BOT_HEALTH_URL ?? null;
+      parseOptionalUrl("BOT_HEALTH_URL") ??
+      parseOptionalUrl("WORKER_BOT_HEALTH_URL") ??
+      null;
     parseNumber("HEALTH_CHECK_INTERVAL_MS");
-    parseNumber("HEALTH_CHECK_TIMEOUT_MS");
+    healthCheckTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
     gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
     gitRemote = getRequiredEnv("GIT_REMOTE");
     gitBranch = getRequiredEnv("GIT_BRANCH");
@@ -193,14 +218,14 @@ async function main(): Promise<void> {
   }
 
   try {
-    postgresLogger.info("connecting");
+    postgresLogger.info("event=postgres_connecting");
     await ensureTable(queryOptions);
-    postgresLogger.info("connection ready");
+    postgresLogger.info("event=postgres_ready");
   } catch (error) {
     exitWithStartupError(error, "postgres startup failed");
   }
 
-  startupLogger.info("config validated");
+  startupLogger.info("event=config_validated");
 
   await runGitUpdateOnce({
     repoPath: gitRepoPath,
@@ -211,22 +236,43 @@ async function main(): Promise<void> {
   const redis = createRedisClient();
   const pool = createPostgresPool();
   try {
-    redisLogger.info("connecting");
+    redisLogger.info("event=redis_connecting");
     await redis.connect();
     await redis.ping();
-    redisLogger.info("connection ready (ping ok)");
+    redisLogger.info("event=redis_ready detail=ping_ok");
   } catch (error) {
     logRedisStartupFailure(error);
     exitWithStartupError(error, "redis startup failed");
   }
 
-  healthLogger.info(`starting server host=${healthHost} port=${healthPort}`);
-  const healthServer = startHealthServer("worker", {
+  const serviceState = new ServiceStateTracker("STARTING");
+  serviceState.setState("READY");
+
+  healthLogger.info(`event=health_start host=${healthHost} port=${healthPort}`);
+  const healthServer = startHealthServer({
+    serviceName: "worker",
     port: healthPort,
-    host: healthHost
+    host: healthHost,
+    getState: () => serviceState.getSnapshot(),
+    deriveState: (checks) => {
+      const redisOk = checks.redis?.ok ?? false;
+      const postgresOk = checks.postgres?.ok ?? false;
+      if (!redisOk) {
+        serviceState.setState("ERROR", "redis_unreachable");
+      } else if (!postgresOk) {
+        serviceState.setState("ERROR", "postgres_unreachable");
+      } else {
+        serviceState.setState("READY");
+      }
+      return serviceState.getSnapshot();
+    },
+    checks: {
+      redis: async () => checkRedisHealth(redis, healthCheckTimeoutMs),
+      postgres: async () => checkPostgresHealth(pool, healthCheckTimeoutMs)
+    }
   });
   healthServer.on("listening", () => {
-    healthLogger.info(`server listening host=${healthHost} port=${healthPort}`);
+    healthLogger.info(`event=health_listen host=${healthHost} port=${healthPort}`);
   });
 
   if (botHealthUrl) {
@@ -239,15 +285,15 @@ async function main(): Promise<void> {
       const latency =
         result.latencyMs === undefined ? "n/a" : `${Math.round(result.latencyMs)}ms`;
       if (result.status === "up") {
-        healthLogger.info(`bot health check status=up latency=${latency}`);
+        healthLogger.info(`event=bot_health status=up latency=${latency}`);
       } else {
         const reason = result.reason ?? "unreachable";
         healthLogger.warn(
-          `bot health check status=down reason=${reason} latency=${latency}`
+          `event=bot_health status=down reason=${reason} latency=${latency}`
         );
       }
     } catch (error) {
-      healthLogger.warn("bot health check failed");
+      healthLogger.warn("event=bot_health status=error reason=check_failed");
     }
   }
 
@@ -292,7 +338,13 @@ async function main(): Promise<void> {
     }
   };
 
-  void loop();
+  void loop().catch((error) => {
+    serviceState.setState("ERROR", "worker_loop_failed");
+    startupLogger.fatal(
+      `event=worker_loop_failed message="${error instanceof Error ? error.message : String(error)}"`
+    );
+    process.exit(1);
+  });
 
   registerGracefulShutdown([
     () => {

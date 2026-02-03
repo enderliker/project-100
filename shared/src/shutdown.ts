@@ -16,7 +16,7 @@ export function registerGracefulShutdown(handlers: ShutdownHandler[]): void {
       try {
         await Promise.resolve(handler());
       } catch (error) {
-        logger.error(`shutdown handler error after ${signal}`);
+        logger.error(`event=shutdown_handler_error signal=${signal}`);
       }
     }
     process.exit(0);
