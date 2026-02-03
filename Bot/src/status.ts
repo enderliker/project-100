@@ -1,9 +1,9 @@
-import { EmbedBuilder } from "@discordjs/builders";
 import {
   RemoteServiceCheckResult,
   RemoteServiceCheckOptions,
   checkRemoteService
 } from "@project/shared";
+import { buildBaseEmbed, EmbedContext } from "./embeds";
 
 export interface StatusCheckConfig {
   workerUrl?: string;
@@ -16,6 +16,7 @@ export interface StatusDependencies {
   serviceMode: string;
   uptimeSeconds: number;
   redisConnected: boolean;
+  postgresConnected: boolean | null;
   version: string;
 }
 
@@ -81,36 +82,48 @@ function formatUptime(seconds: number): string {
 }
 
 export function buildStatusEmbed(
+  context: EmbedContext,
   deps: StatusDependencies,
   snapshot: StatusSnapshot
-): EmbedBuilder {
+): ReturnType<typeof buildBaseEmbed> {
   const uptime = formatUptime(deps.uptimeSeconds);
-  const embed = new EmbedBuilder()
-    .setTitle("Service Status")
-    .setColor(0x2f3136)
-    .setFields([
-      {
-        name: "Bot",
-        value: `\`up\` • uptime \`${uptime}\` • version \`${deps.version}\`\nmode \`${deps.serviceMode}\``,
-        inline: false
-      },
-      {
-        name: "Worker",
-        value: formatServiceValue(snapshot.worker),
-        inline: false
-      },
-      {
-        name: "Worker2",
-        value: formatServiceValue(snapshot.worker2),
-        inline: false
-      },
-      {
-        name: "Redis",
-        value: deps.redisConnected ? "`up`" : "`down`",
-        inline: false
-      }
-    ])
-    .setFooter({ text: `Last checked: ${new Date().toISOString()}` });
+  const postgresValue =
+    deps.postgresConnected === null
+      ? "`unknown`"
+      : deps.postgresConnected
+        ? "`up`"
+        : "`down`";
+
+  const embed = buildBaseEmbed(context, {
+    title: "Service Status",
+    description: `mode \`${deps.serviceMode}\``
+  }).setFields([
+    {
+      name: "Bot",
+      value: `\`up\` • uptime \`${uptime}\` • version \`${deps.version}\``,
+      inline: false
+    },
+    {
+      name: "Worker",
+      value: formatServiceValue(snapshot.worker),
+      inline: false
+    },
+    {
+      name: "Worker2",
+      value: formatServiceValue(snapshot.worker2),
+      inline: false
+    },
+    {
+      name: "Redis",
+      value: deps.redisConnected ? "`up`" : "`down`",
+      inline: false
+    },
+    {
+      name: "Postgres",
+      value: postgresValue,
+      inline: false
+    }
+  ]);
 
   return embed;
 }
