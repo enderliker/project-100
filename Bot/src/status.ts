@@ -127,3 +127,28 @@ export function buildStatusEmbed(
 
   return embed;
 }
+
+export function buildStatusMessage(
+  deps: StatusDependencies,
+  snapshot: StatusSnapshot
+): string {
+  const uptime = formatUptime(deps.uptimeSeconds);
+  const postgresValue =
+    deps.postgresConnected === null
+      ? "`unknown`"
+      : deps.postgresConnected
+        ? "`up`"
+        : "`down`";
+
+  const lines = [
+    `Service Status`,
+    `mode \`${deps.serviceMode}\``,
+    `Bot: \`up\` • uptime \`${uptime}\` • version \`${deps.version}\``,
+    `Worker: ${formatServiceValue(snapshot.worker)}`,
+    `Worker2: ${formatServiceValue(snapshot.worker2)}`,
+    `Redis: ${deps.redisConnected ? "`up`" : "`down`"}`,
+    `Postgres: ${postgresValue}`
+  ];
+
+  return lines.join("\n");
+}
