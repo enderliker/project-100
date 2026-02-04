@@ -1,7 +1,7 @@
 import type { PermissionResolvable } from "discord.js";
-import { getGuildSettings } from "../commands/guild-settings-store";
 import type { Command } from "./Command";
 import type { CommandContext } from "./Context";
+import { canRunCommand } from "./command-permissions";
 
 const cooldowns = new Map<string, number>();
 
@@ -128,63 +128,6 @@ function checkMaintenance(context: CommandContext): MiddlewareResult {
   };
 }
 
-async function checkCommandOverrides(
-  command: Command,
-  context: CommandContext
-): Promise<MiddlewareResult & { cooldownOverride?: number }> {
-  if (!context.guild || !context.postgresPool) {
-    return { ok: true };
-  }
-
-  const settings = await getGuildSettings(context.postgresPool, context.guild.id);
-  const override = settings.commands[command.name];
-  if (!override) {
-    return { ok: true };
-  }
-
-  if (override.enabled === false) {
-    return {
-      ok: false,
-      message: "This command is disabled for this server."
-    };
-  }
-
-  if (override.denyUsers?.includes(context.user.id)) {
-    return {
-      ok: false,
-      message: "You are not allowed to use this command."
-    };
-  }
-
-  if (context.member) {
-    const memberRoleIds = new Set(context.member.roles.cache.map((role) => role.id));
-    if (override.denyRoles?.some((roleId) => memberRoleIds.has(roleId))) {
-      return {
-        ok: false,
-        message: "You are not allowed to use this command."
-      };
-    }
-  }
-
-  const allowUsers = override.allowUsers ?? [];
-  const allowRoles = override.allowRoles ?? [];
-  if (allowUsers.length > 0 || allowRoles.length > 0) {
-    const isAllowedUser = allowUsers.includes(context.user.id);
-    const memberRoleIds = context.member
-      ? new Set(context.member.roles.cache.map((role) => role.id))
-      : new Set<string>();
-    const isAllowedRole = allowRoles.some((roleId) => memberRoleIds.has(roleId));
-    if (!isAllowedUser && !isAllowedRole) {
-      return {
-        ok: false,
-        message: "You are not allowed to use this command."
-      };
-    }
-  }
-
-  return { ok: true, cooldownOverride: override.cooldownSeconds };
-}
-
 export async function runMiddleware(
   command: Command,
   context: CommandContext
@@ -202,7 +145,7 @@ export async function runMiddleware(
     }
   }
 
-  const overrideResult = await checkCommandOverrides(command, context);
+  const overrideResult = await canRunCommand(command, context);
   if (!overrideResult.ok) {
     return overrideResult;
   }

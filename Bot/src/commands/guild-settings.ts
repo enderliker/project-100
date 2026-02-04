@@ -1,3 +1,5 @@
+import { isCommandName, type CommandName } from "./command-names";
+
 export interface CommandOverride {
   enabled?: boolean;
   cooldownSeconds?: number;
@@ -13,6 +15,10 @@ export interface RulesConfig {
   messageId: string | null;
   pin: boolean;
   title: string;
+}
+
+export interface CommandConfig extends CommandOverride {
+  command: CommandName;
 }
 
 export interface GuildSettings {
@@ -38,7 +44,7 @@ export interface GuildSettings {
     logs: boolean;
     rules: boolean;
   };
-  commands: Record<string, CommandOverride>;
+  commands: Partial<Record<CommandName, CommandOverride>>;
   rules: RulesConfig;
 }
 
@@ -168,7 +174,7 @@ export function mergeGuildSettings(base: GuildSettings, update: GuildSettingsUpd
 
   if (update.commands) {
     for (const [command, override] of Object.entries(update.commands)) {
-      if (!override) {
+      if (!override || !isCommandName(command)) {
         continue;
       }
       merged.commands[command] = {
@@ -220,6 +226,9 @@ export function normalizeGuildSettings(settings: GuildSettings): GuildSettings {
   };
 
   for (const [command, override] of Object.entries(settings.commands ?? {})) {
+    if (!isCommandName(command)) {
+      continue;
+    }
     const normalizedOverride = normalizeCommandOverride(override);
     if (normalizedOverride) {
       normalized.commands[command] = normalizedOverride;

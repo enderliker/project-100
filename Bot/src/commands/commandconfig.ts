@@ -7,7 +7,11 @@ import {
   requirePostgres,
   trimEmbedDescription
 } from "./command-utils";
-import { getCommands } from "../command-handler/registry";
+import {
+  COMMAND_NAMES,
+  isCommandName,
+  type CommandName
+} from "./command-names";
 import { getGuildConfig } from "./storage";
 import {
   clearGuildSettingsCache,
@@ -15,7 +19,8 @@ import {
   updateGuildSettings
 } from "./guild-settings-store";
 import type { CommandOverride } from "./guild-settings";
-import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
+import { safeDefer, safeRespond } from "../command-handler/interaction-response";
+import { commandConfigStore } from "../command-handler/command-config-store";
 
 const MAX_COOLDOWN_SECONDS = 3600;
 
@@ -64,6 +69,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
     )
@@ -75,6 +81,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
     )
@@ -86,6 +93,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
     )
@@ -97,6 +105,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
         .addIntegerOption((option) =>
@@ -116,6 +125,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
         .addRoleOption((option) =>
@@ -130,6 +140,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
         .addRoleOption((option) =>
@@ -144,6 +155,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
         .addUserOption((option) =>
@@ -158,6 +170,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
         .addUserOption((option) =>
@@ -172,6 +185,7 @@ export const command: CommandDefinition = {
           option
             .setName("command")
             .setDescription("Command name")
+            .setAutocomplete(true)
             .setRequired(true)
         )
         .addStringOption((option) =>
@@ -189,6 +203,16 @@ export const command: CommandDefinition = {
             .setRequired(true)
         )
     ),
+  autocomplete: async (interaction) => {
+    const focused = interaction.options.getFocused(true);
+    if (focused.name !== "command") {
+      return [];
+    }
+    const query = focused.value.trim().toLowerCase();
+    return COMMAND_NAMES.filter((name) => name.includes(query))
+      .slice(0, 25)
+      .map((name) => ({ name, value: name }));
+  },
   execute: async (interaction, context) => {
     const guildContext = await requireGuildContext(interaction, context);
     if (!guildContext) {
@@ -210,17 +234,17 @@ export const command: CommandDefinition = {
     }
 
     const commandNameInput = interaction.options.getString("command", true);
-    const commandName = normalizeCommandName(commandNameInput);
-    const knownCommands = new Set(getCommands().map((command) => command.name));
-    if (!knownCommands.has(commandName)) {
+    const normalizedCommand = normalizeCommandName(commandNameInput);
+    if (!isCommandName(normalizedCommand)) {
       const embed = buildEmbed(context, {
         title: "Unknown Command",
-        description: `No command named \`${commandName}\` was found.`,
+        description: `No command named \`${normalizedCommand}\` was found.`,
         variant: "warning"
       });
       await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    const commandName: CommandName = normalizedCommand;
 
     await safeDefer(interaction, { ephemeral: true });
 
@@ -246,6 +270,7 @@ export const command: CommandDefinition = {
         }
       });
       clearGuildSettingsCache(guildContext.guild.id);
+      commandConfigStore.invalidate(guildContext.guild.id);
       const embed = buildEmbed(context, {
         title: "Command Updated",
         description: `Command \`${commandName}\` is now ${enabled ? "enabled" : "disabled"}.`
@@ -266,6 +291,7 @@ export const command: CommandDefinition = {
         }
       });
       clearGuildSettingsCache(guildContext.guild.id);
+      commandConfigStore.invalidate(guildContext.guild.id);
       const embed = buildEmbed(context, {
         title: "Command Cooldown Updated",
         description:
@@ -289,6 +315,7 @@ export const command: CommandDefinition = {
         }
       });
       clearGuildSettingsCache(guildContext.guild.id);
+      commandConfigStore.invalidate(guildContext.guild.id);
       const embed = buildEmbed(context, {
         title: "Command Role Updated",
         description: `${role} ${subcommand === "allow-role" ? "allowed" : "denied"} for \`${commandName}\`.`
@@ -309,6 +336,7 @@ export const command: CommandDefinition = {
         }
       });
       clearGuildSettingsCache(guildContext.guild.id);
+      commandConfigStore.invalidate(guildContext.guild.id);
       const embed = buildEmbed(context, {
         title: "Command User Updated",
         description: `${user} ${subcommand === "allow-user" ? "allowed" : "denied"} for \`${commandName}\`.`
@@ -327,6 +355,7 @@ export const command: CommandDefinition = {
           }
         });
         clearGuildSettingsCache(guildContext.guild.id);
+        commandConfigStore.invalidate(guildContext.guild.id);
         const embed = buildEmbed(context, {
           title: "Command Overrides Cleared",
           description: `All overrides removed for \`${commandName}\`.`
@@ -355,6 +384,7 @@ export const command: CommandDefinition = {
         }
       });
       clearGuildSettingsCache(guildContext.guild.id);
+      commandConfigStore.invalidate(guildContext.guild.id);
       const embed = buildEmbed(context, {
         title: "Command Overrides Updated",
         description: `Overrides updated for \`${commandName}\`.`

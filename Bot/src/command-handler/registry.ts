@@ -3,6 +3,7 @@ import path from "path";
 import type { REST } from "discord.js";
 import { Routes } from "discord.js";
 import type { CommandDefinition } from "../commands/types";
+import { COMMAND_NAMES } from "../commands/command-names";
 import { createLogger } from "@project/shared";
 import type { Command } from "./Command";
 
@@ -35,6 +36,17 @@ export function assertCommandSanity(): void {
       throw new Error(`Duplicate command detected in registry: ${command.name}`);
     }
     names.add(command.name);
+  }
+  const missingNames = COMMAND_NAMES.filter((name) => !names.has(name));
+  const extraNames = Array.from(names).filter(
+    (name) => !COMMAND_NAMES.includes(name as (typeof COMMAND_NAMES)[number])
+  );
+  if (missingNames.length > 0 || extraNames.length > 0) {
+    const missingList = missingNames.length > 0 ? missingNames.join(", ") : "none";
+    const extraList = extraNames.length > 0 ? extraNames.join(", ") : "none";
+    throw new Error(
+      `Command name list mismatch. Missing: ${missingList}. Extra: ${extraList}.`
+    );
   }
   registryLogger.info(`event=command_registry_ready count=${commandRegistry.size}`);
 }
@@ -126,9 +138,21 @@ export function registerCommandDefinitions(
 ): void {
   clearCommands();
   for (const command of definitions.values()) {
+    const autocomplete = command.autocomplete;
     registerCommand({
       name: command.data.name,
       data: command.data,
+      autocomplete: autocomplete
+        ? async (context) => {
+            if (!context.legacyContext) {
+              throw new Error("Legacy command context unavailable");
+            }
+            if (!context.interaction.isAutocomplete()) {
+              return;
+            }
+            await autocomplete(context.interaction, context.legacyContext);
+          }
+        : undefined,
       execute: async (context) => {
         if (!context.legacyContext) {
           throw new Error("Legacy command context unavailable");

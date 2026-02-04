@@ -164,6 +164,8 @@ declare module "discord.js" {
     getChannel(name: string, required?: boolean): Channel | null;
     getRole(name: string, required: true): Role;
     getRole(name: string, required?: boolean): Role | null;
+    getFocused(required: true): { name: string; value: string };
+    getFocused(required?: boolean): string;
   }
 
   export interface Interaction {
@@ -194,6 +196,7 @@ declare module "discord.js" {
     user: User;
     guild: Guild | null;
     member: GuildMember | null;
+    options: CommandInteractionOptionResolver;
     respond(choices: ApplicationCommandOptionChoiceData[]): Promise<void>;
   }
 
@@ -281,6 +284,7 @@ declare module "discord.js" {
   export interface SlashCommandStringOption extends BaseSlashCommandOption {
     setMinLength(length: number): this;
     setMaxLength(length: number): this;
+    setAutocomplete(enabled: boolean): this;
   }
   export interface SlashCommandIntegerOption extends BaseSlashCommandOption {
     setMinValue(value: number): this;
