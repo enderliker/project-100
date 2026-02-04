@@ -1,7 +1,6 @@
-import type { PermissionResolvable } from "discord.js";
 import type { Command } from "./Command";
 import type { CommandContext } from "./Context";
-import { canRunCommand } from "./command-permissions";
+import { canUseCommand } from "./command-permissions";
 
 const cooldowns = new Map<string, number>();
 
@@ -27,37 +26,6 @@ function parseAllowlist(value: string | undefined): Set<string> {
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
   return new Set(entries);
-}
-
-function getMissingPermissions(
-  permissions: PermissionResolvable[],
-  context: CommandContext
-): PermissionResolvable[] {
-  if (!context.member) {
-    return permissions;
-  }
-  const memberPermissions = context.member.permissions;
-  return permissions.filter((permission) => !memberPermissions.has(permission));
-}
-
-function checkPermissions(command: Command, context: CommandContext): MiddlewareResult {
-  if (!command.permissions || command.permissions.length === 0) {
-    return { ok: true };
-  }
-  if (!context.guild || !context.member) {
-    return {
-      ok: false,
-      message: "This command can only be used in a server."
-    };
-  }
-  const missing = getMissingPermissions(command.permissions, context);
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      message: "You do not have permission to run this command."
-    };
-  }
-  return { ok: true };
 }
 
 function checkGuildDmRules(command: Command, context: CommandContext): MiddlewareResult {
@@ -134,8 +102,7 @@ export async function runMiddleware(
 ): Promise<MiddlewareResult> {
   const checks = [
     () => checkMaintenance(context),
-    () => checkGuildDmRules(command, context),
-    () => checkPermissions(command, context)
+    () => checkGuildDmRules(command, context)
   ];
 
   for (const check of checks) {
@@ -145,7 +112,7 @@ export async function runMiddleware(
     }
   }
 
-  const overrideResult = await canRunCommand(command, context);
+  const overrideResult = await canUseCommand(command, context);
   if (!overrideResult.ok) {
     return overrideResult;
   }

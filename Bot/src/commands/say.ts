@@ -2,14 +2,12 @@ import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
-  hasModAccess,
   handleCommandError,
   requireBotPermissions,
   requireChannelPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
-import { getGuildConfig } from "./storage";
 import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
@@ -26,16 +24,6 @@ export const command: CommandDefinition = {
     }
     const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
-      return;
-    }
-    const config = await getGuildConfig(pool, guildContext.guild.id);
-    if (!hasModAccess(guildContext.member, config)) {
-      const embed = buildEmbed(context, {
-        title: "Permission Denied",
-        description: "You do not have permission to use /say.",
-        variant: "error"
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const botMember = await requireBotPermissions(

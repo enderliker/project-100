@@ -3,16 +3,13 @@ import type { TextBasedChannel } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
-  hasModAccess,
   handleCommandError,
   logModerationAction,
   requireBotPermissions,
   requireChannelPermissions,
   requireGuildContext,
-  requireInvokerPermissions,
   requirePostgres
 } from "./command-utils";
-import { getGuildConfig } from "./storage";
 import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const MAX_SLOWMODE = 21600;
@@ -46,26 +43,6 @@ export const command: CommandDefinition = {
     }
     const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
-      return;
-    }
-    const config = await getGuildConfig(pool, guildContext.guild.id);
-    if (!hasModAccess(guildContext.member, config)) {
-      const embed = buildEmbed(context, {
-        title: "Permission Denied",
-        description: "You do not have permission to manage slowmode.",
-        variant: "error"
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
-      return;
-    }
-    const hasPermissions = await requireInvokerPermissions(
-      interaction,
-      context,
-      guildContext.member,
-      ["ManageChannels"],
-      "update slowmode"
-    );
-    if (!hasPermissions) {
       return;
     }
     const botMember = await requireBotPermissions(
