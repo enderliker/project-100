@@ -39,6 +39,15 @@ export const command: CommandDefinition = {
       return;
     }
     const channel = interaction.options.getChannel("channel", true);
+    if (!channel) {
+      const embed = buildEmbed(context, {
+        title: "Channel Not Found",
+        description: "Please specify a valid channel for moderation logs.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     await setGuildLogsChannel(pool, guildContext.guild.id, channel.id);
     const embed = buildEmbed(context, {
       title: "Logs Channel Updated",

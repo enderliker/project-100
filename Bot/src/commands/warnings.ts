@@ -36,6 +36,15 @@ export const command: CommandDefinition = {
       return;
     }
     const target = interaction.options.getUser("user", true);
+    if (!target) {
+      const embed = buildEmbed(context, {
+        title: "User Not Found",
+        description: "Please specify a valid user to view warnings.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const warnings = await listWarnings(pool, guildContext.guild.id, target.id);
     if (warnings.length === 0) {
       const embed = buildEmbed(context, {

@@ -15,6 +15,15 @@ export const command: CommandDefinition = {
   execute: async (interaction, context) => {
     const user1 = interaction.options.getUser("user1", true);
     const user2 = interaction.options.getUser("user2", true);
+    if (!user1 || !user2) {
+      const embed = buildEmbed(context, {
+        title: "Users Not Found",
+        description: "Please provide two valid users to ship.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const score = Math.floor(Math.random() * 101);
     const embed = buildEmbed(context, {
       title: "Ship",

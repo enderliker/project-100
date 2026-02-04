@@ -39,7 +39,17 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const prefix = interaction.options.getString("prefix", true).trim();
+    const prefixValue = interaction.options.getString("prefix", true);
+    if (!prefixValue) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Prefix",
+        description: "Please specify a valid prefix.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const prefix = prefixValue.trim();
     await setGuildPrefix(pool, guildContext.guild.id, prefix);
     const embed = buildEmbed(context, {
       title: "Prefix Updated",

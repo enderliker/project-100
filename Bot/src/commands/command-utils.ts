@@ -2,6 +2,7 @@ import type {
   Channel,
   Guild,
   GuildMember,
+  InteractionReplyOptions,
   TextBasedChannel,
   User
 } from "discord.js";
@@ -36,7 +37,7 @@ export async function requireGuildContext(
 
 export function requirePostgres(
   context: CommandExecutionContext,
-  reply: (options: unknown) => Promise<void>
+  reply: (options: InteractionReplyOptions | string) => Promise<void>
 ): Pool | null {
   if (!context.postgresPool) {
     const embed = buildEmbed(context, {
