@@ -152,9 +152,8 @@ export async function requireInvokerPermissions(
   return true;
 }
 
-type PermissionCheckChannel = {
-  permissionsFor?: (member: GuildMember) => { has: (permission: string) => boolean } | null;
-};
+// PermissionCheckChannel is intentionally unknown to accommodate discord.js type unions.
+type PermissionCheckChannel = unknown;
 
 export async function requireChannelPermissions(
   interaction: {
@@ -169,7 +168,7 @@ export async function requireChannelPermissions(
   permissions: string[],
   action: string
 ): Promise<boolean> {
-  if (typeof channel.permissionsFor !== "function") {
+  if (typeof channel !== "object" || channel === null) {
     const embed = buildEmbed(context, {
       title: "Permission Denied",
       description: `Unable to verify permissions to ${action} in this channel.`,
@@ -178,7 +177,23 @@ export async function requireChannelPermissions(
     await replyEphemeral(interaction, { embeds: [embed] });
     return false;
   }
-  const channelPermissions = channel.permissionsFor(member);
+  if (
+    !("permissionsFor" in channel) ||
+    typeof (channel as { permissionsFor?: unknown }).permissionsFor !== "function"
+  ) {
+    const embed = buildEmbed(context, {
+      title: "Permission Denied",
+      description: `Unable to verify permissions to ${action} in this channel.`,
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  const channelPermissions = (
+    channel as {
+      permissionsFor: (member: GuildMember) => { has: (permission: string) => boolean } | null;
+    }
+  ).permissionsFor(member);
   if (!channelPermissions) {
     const embed = buildEmbed(context, {
       title: "Permission Denied",
