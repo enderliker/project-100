@@ -571,7 +571,8 @@ async function main(): Promise<void> {
   });
 
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+    // GuildMembers intent is unavailable in this discord.js build.
+    intents: [GatewayIntentBits.Guilds],
     makeCache: Options.cacheWithLimits({
       MessageManager: 0,
       PresenceManager: 0,

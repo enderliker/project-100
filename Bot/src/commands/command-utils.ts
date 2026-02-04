@@ -1,7 +1,7 @@
-import { DiscordAPIError, GuildMember } from "discord.js";
 import type {
   Channel,
   Guild,
+  GuildMember,
   InteractionReplyOptions,
   TextBasedChannel,
   User
@@ -9,6 +9,7 @@ import type {
 import { RESTJSONErrorCodes } from "discord-api-types/v10";
 import type { Pool } from "pg";
 import { buildBaseEmbed } from "../embeds";
+import { getErrorInfo } from "../discord-error-utils";
 import type { CommandExecutionContext } from "./types";
 import { createModlog, getGuildConfig } from "./storage";
 import { getGuildSettings } from "./guild-settings-store";
@@ -30,7 +31,11 @@ export async function requireGuildContext(
   },
   context: CommandExecutionContext
 ): Promise<{ guild: Guild; member: GuildMember } | null> {
-  if (!interaction.guild) {
+  const inGuild =
+    "inGuild" in interaction && typeof interaction.inGuild === "function"
+      ? interaction.inGuild()
+      : Boolean(interaction.guild);
+  if (!interaction.guild || !inGuild) {
     const embed = buildEmbed(context, {
       title: "Server Only",
       description: "This command can only be used in a server.",
@@ -39,10 +44,9 @@ export async function requireGuildContext(
     await interaction.reply({ embeds: [embed], ephemeral: true });
     return null;
   }
-  const member =
-    interaction.member instanceof GuildMember
-      ? interaction.member
-      : await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  const member = await interaction.guild.members
+    .fetch(interaction.user.id)
+    .catch(() => null);
   if (!member) {
     const embed = buildEmbed(context, {
       title: "Member Unavailable",
@@ -77,17 +81,14 @@ export async function getMeMemberSafe(
   context: CommandExecutionContext,
   guild: Guild
 ): Promise<GuildMember | null> {
+  if (!context.client.user) {
+    return null;
+  }
   try {
-    return await guild.members.fetchMe();
+    // fetchMe is unavailable in this discord.js build; fetch by user id instead.
+    return await guild.members.fetch(context.client.user.id);
   } catch {
-    if (!context.client.user) {
-      return null;
-    }
-    try {
-      return await guild.members.fetch(context.client.user.id);
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -151,9 +152,8 @@ export async function requireInvokerPermissions(
   return true;
 }
 
-type PermissionCheckChannel = {
-  permissionsFor: (member: GuildMember) => { has: (permission: string) => boolean } | null;
-};
+// PermissionCheckChannel is intentionally unknown to accommodate discord.js type unions.
+type PermissionCheckChannel = unknown;
 
 export async function requireChannelPermissions(
   interaction: {
@@ -168,7 +168,32 @@ export async function requireChannelPermissions(
   permissions: string[],
   action: string
 ): Promise<boolean> {
-  const channelPermissions = channel.permissionsFor(member);
+  if (typeof channel !== "object" || channel === null) {
+    const embed = buildEmbed(context, {
+      title: "Permission Denied",
+      description: `Unable to verify permissions to ${action} in this channel.`,
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  if (
+    !("permissionsFor" in channel) ||
+    typeof (channel as { permissionsFor?: unknown }).permissionsFor !== "function"
+  ) {
+    const embed = buildEmbed(context, {
+      title: "Permission Denied",
+      description: `Unable to verify permissions to ${action} in this channel.`,
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  const channelPermissions = (
+    channel as {
+      permissionsFor: (member: GuildMember) => { has: (permission: string) => boolean } | null;
+    }
+  ).permissionsFor(member);
   if (!channelPermissions) {
     const embed = buildEmbed(context, {
       title: "Permission Denied",
@@ -189,6 +214,43 @@ export async function requireChannelPermissions(
     return false;
   }
   return true;
+}
+
+function getHighestRolePosition(member: GuildMember): number | null {
+  const cache = member.roles?.cache;
+  if (!cache || cache.size === 0) {
+    return null;
+  }
+  let highest: number | null = null;
+  for (const role of cache.values()) {
+    const position = (role as { position?: unknown }).position;
+    if (typeof position !== "number") {
+      continue;
+    }
+    if (highest === null || position > highest) {
+      highest = position;
+    }
+  }
+  return highest;
+}
+
+function compareRolePositions(left: GuildMember, right: GuildMember): number | null {
+  const leftRoles = left.roles as {
+    highest?: { comparePositionTo?: (other: unknown) => number };
+  };
+  const rightRoles = right.roles as { highest?: unknown };
+  if (leftRoles.highest && typeof leftRoles.highest.comparePositionTo === "function") {
+    return leftRoles.highest.comparePositionTo(rightRoles.highest);
+  }
+  const leftPosition = getHighestRolePosition(left);
+  const rightPosition = getHighestRolePosition(right);
+  if (leftPosition === null || rightPosition === null) {
+    return null;
+  }
+  if (leftPosition === rightPosition) {
+    return 0;
+  }
+  return leftPosition > rightPosition ? 1 : -1;
 }
 
 export function requirePostgres(
@@ -364,9 +426,16 @@ export async function validateModerationTarget(options: {
     }
   }
   if (invoker.id !== guild.ownerId) {
-    const invokerPosition = invoker.roles.highest.comparePositionTo(
-      targetMember.roles.highest
-    );
+    const invokerPosition = compareRolePositions(invoker, targetMember);
+    if (invokerPosition === null) {
+      const embed = buildEmbed(context, {
+        title: "Role Hierarchy",
+        description: "Unable to verify role hierarchy for this member.",
+        variant: "warning"
+      });
+      await replyEphemeral(interaction, { embeds: [embed] });
+      return false;
+    }
     if (invokerPosition <= 0) {
       const embed = buildEmbed(context, {
         title: "Role Hierarchy",
@@ -378,9 +447,16 @@ export async function validateModerationTarget(options: {
     }
   }
   if (botMember) {
-    const botPosition = botMember.roles.highest.comparePositionTo(
-      targetMember.roles.highest
-    );
+    const botPosition = compareRolePositions(botMember, targetMember);
+    if (botPosition === null) {
+      const embed = buildEmbed(context, {
+        title: "Role Hierarchy",
+        description: "Unable to verify role hierarchy for this member.",
+        variant: "warning"
+      });
+      await replyEphemeral(interaction, { embeds: [embed] });
+      return false;
+    }
     if (botPosition <= 0) {
       const embed = buildEmbed(context, {
         title: "Role Hierarchy",
@@ -399,10 +475,11 @@ export function mapDiscordError(error: unknown): {
   description: string;
   variant: "warning" | "error";
 } | null {
-  if (!(error instanceof DiscordAPIError)) {
+  const { code, status } = getErrorInfo(error);
+  if (typeof code !== "string" && typeof code !== "number") {
     return null;
   }
-  switch (error.code) {
+  switch (code) {
     case RESTJSONErrorCodes.MissingPermissions:
       return {
         title: "Missing Permissions",
@@ -440,7 +517,7 @@ export function mapDiscordError(error: unknown): {
         variant: "warning"
       };
     default:
-      if (error.status === 429) {
+      if (status === 429) {
         return {
           title: "Rate Limited",
           description: "Discord rate limited the request. Please try again shortly.",
