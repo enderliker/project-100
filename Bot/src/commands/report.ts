@@ -3,12 +3,11 @@ import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
   formatUserLabel,
-  hasModAccess,
   logModerationAction,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
-import { createReport, getGuildConfig } from "./storage";
+import { createReport } from "./storage";
 import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
@@ -28,16 +27,6 @@ export const command: CommandDefinition = {
     }
     const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
-      return;
-    }
-    const config = await getGuildConfig(pool, guildContext.guild.id);
-    if (!hasModAccess(guildContext.member, config)) {
-      const embed = buildEmbed(context, {
-        title: "Permission Denied",
-        description: "You do not have permission to submit reports.",
-        variant: "error"
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const target = interaction.options.getUser("user", true);

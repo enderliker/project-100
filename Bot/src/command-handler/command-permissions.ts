@@ -1,8 +1,8 @@
+import type { PermissionResolvable } from "discord.js";
 import type { Command } from "./Command";
 import type { CommandContext } from "./Context";
 import { commandConfigStore } from "./command-config-store";
-import { isCommandName } from "../commands/command-names";
-import { getGuildConfig } from "../commands/storage";
+import { isCommandName, type CommandName } from "../commands/command-names";
 import type { CommandConfig } from "../commands/guild-settings";
 
 export interface CommandPermissionResult {
@@ -42,7 +42,8 @@ function normalizeIdList(list: string[] | undefined): { values: string[]; change
 
 function normalizeCommandConfig(
   context: CommandContext,
-  config: CommandConfig
+  config: CommandConfig,
+  options: { isModeration: boolean }
 ): {
   allowRoles: string[];
   denyRoles: string[];
@@ -72,6 +73,20 @@ function normalizeCommandConfig(
     }
   }
 
+  if (!options.isModeration) {
+    const hasAllowEntries = filteredAllowRoles.length > 0 || allowUsers.values.length > 0;
+    if (hasAllowEntries) {
+      changed = true;
+    }
+    return {
+      allowRoles: [],
+      denyRoles: filteredDenyRoles,
+      allowUsers: [],
+      denyUsers: denyUsers.values,
+      changed
+    };
+  }
+
   const denyRoleSet = new Set(filteredDenyRoles);
   const denyUserSet = new Set(denyUsers.values);
   const cleanedAllowRoles = filteredAllowRoles.filter((roleId) => !denyRoleSet.has(roleId));
@@ -92,24 +107,60 @@ function normalizeCommandConfig(
   };
 }
 
-async function hasAdminOverride(context: CommandContext): Promise<boolean> {
-  if (!context.guild || !context.member || !context.postgresPool) {
+type PermissionPolicy = {
+  all?: PermissionResolvable[];
+  any?: PermissionResolvable[];
+};
+
+const MODERATION_PERMISSION_POLICIES: Partial<Record<CommandName, PermissionPolicy>> = {
+  ban: { all: ["BanMembers"] },
+  unban: { all: ["BanMembers"] },
+  kick: { all: ["KickMembers"] },
+  timeout: { all: ["ModerateMembers"] },
+  untimeout: { all: ["ModerateMembers"] },
+  warn: { all: ["ModerateMembers"] },
+  warnings: { all: ["ModerateMembers"] },
+  clear: { all: ["ManageMessages"] },
+  purge: { all: ["ManageMessages"] },
+  lock: { all: ["ManageChannels"] },
+  unlock: { all: ["ManageChannels"] },
+  slowmode: { all: ["ManageChannels"] },
+  nick: { all: ["ManageNicknames"] },
+  logs: {
+    any: ["BanMembers", "KickMembers", "ModerateMembers", "ManageMessages"]
+  },
+  say: { all: ["ManageMessages"] },
+  report: { all: ["ModerateMembers"] }
+};
+
+function getPermissionPolicy(commandName: CommandName): PermissionPolicy | null {
+  return MODERATION_PERMISSION_POLICIES[commandName] ?? null;
+}
+
+export function isModerationCommand(commandName: CommandName): boolean {
+  return Boolean(getPermissionPolicy(commandName));
+}
+
+function hasNativePermissions(
+  policy: PermissionPolicy | null,
+  context: CommandContext
+): boolean {
+  if (!policy || !context.member) {
     return false;
-  }
-  if (context.guild.ownerId && context.guild.ownerId === context.user.id) {
-    return true;
   }
   if (context.member.permissions.has("Administrator")) {
     return true;
   }
-  const config = await getGuildConfig(context.postgresPool, context.guild.id);
-  if (config?.adminroleId && context.member.roles.cache.has(config.adminroleId)) {
-    return true;
+  if (policy.any && policy.any.length > 0) {
+    return policy.any.some((permission) => context.member?.permissions.has(permission));
+  }
+  if (policy.all && policy.all.length > 0) {
+    return policy.all.every((permission) => context.member?.permissions.has(permission));
   }
   return false;
 }
 
-export async function canRunCommand(
+export async function canUseCommand(
   command: Command,
   context: CommandContext
 ): Promise<CommandPermissionResult> {
@@ -120,27 +171,27 @@ export async function canRunCommand(
   if (!isCommandName(command.name)) {
     return { ok: true };
   }
+  const commandName = command.name as CommandName;
+  const permissionPolicy = getPermissionPolicy(commandName);
+  const isModeration = Boolean(permissionPolicy);
 
   const config = await commandConfigStore.getCommandConfig(
     context.postgresPool,
     context.guild.id,
-    command.name
+    commandName
   );
-  if (!config) {
-    return { ok: true };
-  }
-
-  if (config.enabled === false) {
+  if (config?.enabled === false) {
     return {
       ok: false,
       message: "This command is disabled for this server."
     };
   }
 
-  const normalized = normalizeCommandConfig(context, config);
-  if (normalized.changed) {
+  const baseConfig: CommandConfig = config ?? { command: commandName };
+  const normalized = normalizeCommandConfig(context, baseConfig, { isModeration });
+  if (config && normalized.changed) {
     await commandConfigStore.updateCommandConfig(context.postgresPool, context.guild.id, {
-      ...config,
+      ...baseConfig,
       allowRoles: normalized.allowRoles,
       denyRoles: normalized.denyRoles,
       allowUsers: normalized.allowUsers,
@@ -155,15 +206,6 @@ export async function canRunCommand(
     };
   }
 
-  const adminOverride = await hasAdminOverride(context);
-  if (adminOverride) {
-    return { ok: true, cooldownOverride: config.cooldownSeconds };
-  }
-
-  if (normalized.allowUsers.includes(context.user.id)) {
-    return { ok: true, cooldownOverride: config.cooldownSeconds };
-  }
-
   const memberRoleIds = context.member
     ? new Set(context.member.roles.cache.map((role) => role.id))
     : new Set<string>();
@@ -175,17 +217,31 @@ export async function canRunCommand(
     };
   }
 
-  const allowUsers = normalized.allowUsers;
-  const allowRoles = normalized.allowRoles;
-  if (allowUsers.length > 0 || allowRoles.length > 0) {
-    const isAllowedRole = allowRoles.some((roleId) => memberRoleIds.has(roleId));
-    if (!isAllowedRole) {
-      return {
-        ok: false,
-        message: "You are not allowed to use this command."
-      };
-    }
+  if (!isModeration) {
+    return { ok: true, cooldownOverride: config?.cooldownSeconds };
   }
 
-  return { ok: true, cooldownOverride: config.cooldownSeconds };
+  if (!context.member || !context.guild) {
+    return {
+      ok: false,
+      message: "This command can only be used in a server."
+    };
+  }
+
+  if (hasNativePermissions(permissionPolicy, context)) {
+    return { ok: true, cooldownOverride: config?.cooldownSeconds };
+  }
+
+  const allowUsers = normalized.allowUsers;
+  const allowRoles = normalized.allowRoles;
+  const isAllowedUser = allowUsers.includes(context.user.id);
+  const isAllowedRole = allowRoles.some((roleId) => memberRoleIds.has(roleId));
+  if (isAllowedUser || isAllowedRole) {
+    return { ok: true, cooldownOverride: config?.cooldownSeconds };
+  }
+
+  return {
+    ok: false,
+    message: "You do not have permission to run this command."
+  };
 }

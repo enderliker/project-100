@@ -8,7 +8,7 @@ const HELP_TEXT = [
   "/ban, /unban, /kick, /timeout, /untimeout, /warn, /warnings, /clear, /purge, /slowmode, /lock, /unlock, /nick, /report, /logs",
   "",
   "**Server Configuration**",
-  "/setprefix, /setlogs, /setwelcome, /setgoodbye, /setautorole, /setmodrole, /setadminrole, /setrules, /setlanguage, /commandconfig, /toggle",
+  "/setprefix, /setlogs, /setwelcome, /setgoodbye, /setautorole, /setmodrole, /setadminrole, /setrules, /setlanguage, /configcommands, /toggle",
   "",
   "**Community / Info**",
   "/rules, /serverinfo, /userinfo, /avatar, /banner, /roles, /members, /boosters",

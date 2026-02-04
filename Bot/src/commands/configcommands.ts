@@ -7,11 +7,7 @@ import {
   requirePostgres,
   trimEmbedDescription
 } from "./command-utils";
-import {
-  COMMAND_NAMES,
-  isCommandName,
-  type CommandName
-} from "./command-names";
+import { isCommandName, type CommandName } from "./command-names";
 import { getGuildConfig } from "./storage";
 import {
   clearGuildSettingsCache,
@@ -21,15 +17,46 @@ import {
 import type { CommandOverride } from "./guild-settings";
 import { safeDefer, safeRespond } from "../command-handler/interaction-response";
 import { commandConfigStore } from "../command-handler/command-config-store";
+import { isModerationCommand } from "../command-handler/command-permissions";
+import { getCommands } from "../command-handler/registry";
 
-const MAX_COOLDOWN_SECONDS = 3600;
+const MAX_AUTOCOMPLETE = 25;
 
 function normalizeCommandName(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-function summarizeOverride(commandName: string, override: CommandOverride): string {
+function getRegistryCommandNames(): string[] {
+  return getCommands()
+    .map((command) => command.name)
+    .sort();
+}
+
+function resolveCommandName(value: string): CommandName | null {
+  const normalized = normalizeCommandName(value);
+  const registryNames = new Set(getRegistryCommandNames());
+  if (!registryNames.has(normalized)) {
+    return null;
+  }
+  if (!isCommandName(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function summarizeOverride(
+  commandName: CommandName,
+  override: CommandOverride,
+  options: { isModeration: boolean }
+): string {
   const lines: string[] = [`**Command:** ${commandName}`];
+  lines.push(
+    `**Access:** ${
+      options.isModeration
+        ? "Moderation (permissions or explicit allow list)"
+        : "Public (default allow)"
+    }`
+  );
   const enabled = override.enabled;
   if (typeof enabled === "boolean") {
     lines.push(`**Enabled:** ${enabled ? "Yes" : "No"}`);
@@ -39,28 +66,59 @@ function summarizeOverride(commandName: string, override: CommandOverride): stri
     lines.push(`**Cooldown:** ${cooldown}s`);
   }
   const allowRoles = override.allowRoles as string[] | undefined;
-  if (allowRoles && allowRoles.length > 0) {
-    lines.push(`**Allow Roles:** ${allowRoles.map((id) => `<@&${id}>`).join(", ")}`);
-  }
   const denyRoles = override.denyRoles as string[] | undefined;
   if (denyRoles && denyRoles.length > 0) {
     lines.push(`**Deny Roles:** ${denyRoles.map((id) => `<@&${id}>`).join(", ")}`);
   }
   const allowUsers = override.allowUsers as string[] | undefined;
-  if (allowUsers && allowUsers.length > 0) {
-    lines.push(`**Allow Users:** ${allowUsers.map((id) => `<@${id}>`).join(", ")}`);
-  }
   const denyUsers = override.denyUsers as string[] | undefined;
   if (denyUsers && denyUsers.length > 0) {
     lines.push(`**Deny Users:** ${denyUsers.map((id) => `<@${id}>`).join(", ")}`);
   }
+  if (options.isModeration) {
+    if (allowRoles && allowRoles.length > 0) {
+      lines.push(`**Allow Roles:** ${allowRoles.map((id) => `<@&${id}>`).join(", ")}`);
+    }
+    if (allowUsers && allowUsers.length > 0) {
+      lines.push(`**Allow Users:** ${allowUsers.map((id) => `<@${id}>`).join(", ")}`);
+    }
+  } else if ((allowRoles && allowRoles.length > 0) || (allowUsers && allowUsers.length > 0)) {
+    lines.push("**Allow Lists:** Ignored for public commands.");
+  }
   return lines.join("\n");
+}
+
+function hasPermissionOverrides(override: CommandOverride): boolean {
+  return Boolean(
+    (override.allowRoles && override.allowRoles.length > 0) ||
+      (override.allowUsers && override.allowUsers.length > 0) ||
+      (override.denyRoles && override.denyRoles.length > 0) ||
+      (override.denyUsers && override.denyUsers.length > 0)
+  );
+}
+
+function summarizeOverrides(settings: Record<string, CommandOverride>): string {
+  const entries = Object.entries(settings)
+    .filter(([, override]) => hasPermissionOverrides(override))
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) {
+    return "No command overrides configured.";
+  }
+  return entries
+    .map(([name, override]) => {
+      const allowRoles = override.allowRoles?.length ?? 0;
+      const allowUsers = override.allowUsers?.length ?? 0;
+      const denyRoles = override.denyRoles?.length ?? 0;
+      const denyUsers = override.denyUsers?.length ?? 0;
+      return `**${name}** • allow roles: ${allowRoles}, allow users: ${allowUsers}, deny roles: ${denyRoles}, deny users: ${denyUsers}`;
+    })
+    .join("\n");
 }
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
-    .setName("commandconfig")
-    .setDescription("Configure command permissions and cooldowns.")
+    .setName("configcommands")
+    .setDescription("Configure command permissions.")
     .addSubcommand((subcommand) =>
       subcommand
         .setName("view")
@@ -70,57 +128,13 @@ export const command: CommandDefinition = {
             .setName("command")
             .setDescription("Command name")
             .setAutocomplete(true)
-            .setRequired(true)
-        )
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("enable")
-        .setDescription("Enable a command.")
-        .addStringOption((option) =>
-          option
-            .setName("command")
-            .setDescription("Command name")
-            .setAutocomplete(true)
-            .setRequired(true)
-        )
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("disable")
-        .setDescription("Disable a command.")
-        .addStringOption((option) =>
-          option
-            .setName("command")
-            .setDescription("Command name")
-            .setAutocomplete(true)
-            .setRequired(true)
-        )
-    )
-    .addSubcommand((subcommand) =>
-      subcommand
-        .setName("cooldown")
-        .setDescription("Set a command cooldown.")
-        .addStringOption((option) =>
-          option
-            .setName("command")
-            .setDescription("Command name")
-            .setAutocomplete(true)
-            .setRequired(true)
-        )
-        .addIntegerOption((option) =>
-          option
-            .setName("seconds")
-            .setDescription("Cooldown in seconds (0 to clear)")
-            .setMinValue(0)
-            .setMaxValue(MAX_COOLDOWN_SECONDS)
-            .setRequired(true)
+            .setRequired(false)
         )
     )
     .addSubcommand((subcommand) =>
       subcommand
         .setName("allow-role")
-        .setDescription("Allow a role to use a command.")
+        .setDescription("Allow a role to use a moderation command.")
         .addStringOption((option) =>
           option
             .setName("command")
@@ -150,7 +164,7 @@ export const command: CommandDefinition = {
     .addSubcommand((subcommand) =>
       subcommand
         .setName("allow-user")
-        .setDescription("Allow a user to use a command.")
+        .setDescription("Allow a user to use a moderation command.")
         .addStringOption((option) =>
           option
             .setName("command")
@@ -179,8 +193,8 @@ export const command: CommandDefinition = {
     )
     .addSubcommand((subcommand) =>
       subcommand
-        .setName("clear")
-        .setDescription("Clear command overrides.")
+        .setName("reset")
+        .setDescription("Reset command overrides.")
         .addStringOption((option) =>
           option
             .setName("command")
@@ -191,14 +205,11 @@ export const command: CommandDefinition = {
         .addStringOption((option) =>
           option
             .setName("scope")
-            .setDescription("Which override to clear")
+            .setDescription("Which override to reset")
             .addChoices(
-              { name: "all", value: "all" },
-              { name: "cooldown", value: "cooldown" },
-              { name: "allow-roles", value: "allow-roles" },
-              { name: "deny-roles", value: "deny-roles" },
-              { name: "allow-users", value: "allow-users" },
-              { name: "deny-users", value: "deny-users" }
+              { name: "allow", value: "allow" },
+              { name: "deny", value: "deny" },
+              { name: "all", value: "all" }
             )
             .setRequired(true)
         )
@@ -209,8 +220,9 @@ export const command: CommandDefinition = {
       return [];
     }
     const query = focused.value.trim().toLowerCase();
-    return COMMAND_NAMES.filter((name) => name.includes(query))
-      .slice(0, 25)
+    return getRegistryCommandNames()
+      .filter((name) => name.includes(query))
+      .slice(0, MAX_AUTOCOMPLETE)
       .map((name) => ({ name, value: name }));
   },
   execute: async (interaction, context) => {
@@ -233,77 +245,72 @@ export const command: CommandDefinition = {
       return;
     }
 
+    await safeDefer(interaction, { ephemeral: true });
+
+    const settings = await getGuildSettings(pool, guildContext.guild.id);
+    const subcommand = interaction.options.getSubcommand(true);
+
+    if (subcommand === "view") {
+      const commandNameInput = interaction.options.getString("command");
+      if (!commandNameInput) {
+        const embed = buildEmbed(context, {
+          title: "Command Overrides",
+          description: trimEmbedDescription(summarizeOverrides(settings.commands))
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
+      const commandName = resolveCommandName(commandNameInput);
+      if (!commandName) {
+        const embed = buildEmbed(context, {
+          title: "Unknown Command",
+          description: `No command named \`${normalizeCommandName(
+            commandNameInput
+          )}\` was found.`,
+          variant: "warning"
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
+      const currentOverride: CommandOverride = settings.commands[commandName] ?? {};
+      const isModeration = isModerationCommand(commandName);
+      const embed = buildEmbed(context, {
+        title: "Command Overrides",
+        description: trimEmbedDescription(
+          summarizeOverride(commandName, currentOverride, { isModeration })
+        )
+      });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+      return;
+    }
+
     const commandNameInput = interaction.options.getString("command", true);
-    const normalizedCommand = normalizeCommandName(commandNameInput);
-    if (!isCommandName(normalizedCommand)) {
+    const commandName = resolveCommandName(commandNameInput);
+    if (!commandName) {
       const embed = buildEmbed(context, {
         title: "Unknown Command",
-        description: `No command named \`${normalizedCommand}\` was found.`,
+        description: `No command named \`${normalizeCommandName(
+          commandNameInput
+        )}\` was found.`,
         variant: "warning"
       });
       await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
-    const commandName: CommandName = normalizedCommand;
-
-    await safeDefer(interaction, { ephemeral: true });
-
-    const settings = await getGuildSettings(pool, guildContext.guild.id);
+    const isModeration = isModerationCommand(commandName);
     const currentOverride: CommandOverride = settings.commands[commandName] ?? {};
-    const subcommand = interaction.options.getSubcommand(true);
-
-    if (subcommand === "view") {
-      const embed = buildEmbed(context, {
-        title: "Command Overrides",
-        description: trimEmbedDescription(summarizeOverride(commandName, currentOverride))
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    if (subcommand === "enable" || subcommand === "disable") {
-      const enabled = subcommand === "enable";
-      const nextOverride = { ...currentOverride, enabled };
-      await updateGuildSettings(pool, guildContext.guild.id, {
-        commands: {
-          [commandName]: nextOverride
-        }
-      });
-      clearGuildSettingsCache(guildContext.guild.id);
-      commandConfigStore.invalidate(guildContext.guild.id);
-      const embed = buildEmbed(context, {
-        title: "Command Updated",
-        description: `Command \`${commandName}\` is now ${enabled ? "enabled" : "disabled"}.`
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    if (subcommand === "cooldown") {
-      const seconds = interaction.options.getInteger("seconds", true);
-      const nextOverride = {
-        ...currentOverride,
-        cooldownSeconds: seconds === 0 ? undefined : seconds
-      };
-      await updateGuildSettings(pool, guildContext.guild.id, {
-        commands: {
-          [commandName]: nextOverride
-        }
-      });
-      clearGuildSettingsCache(guildContext.guild.id);
-      commandConfigStore.invalidate(guildContext.guild.id);
-      const embed = buildEmbed(context, {
-        title: "Command Cooldown Updated",
-        description:
-          seconds === 0
-            ? `Cooldown cleared for \`${commandName}\`.`
-            : `Cooldown set to ${seconds}s for \`${commandName}\`.`
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
-      return;
-    }
 
     if (subcommand === "allow-role" || subcommand === "deny-role") {
+      if (!isModeration && subcommand === "allow-role") {
+        const embed = buildEmbed(context, {
+          title: "Allow List Not Available",
+          description:
+            "Public commands are already available to everyone. Use deny-* instead.",
+          variant: "warning"
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
       const role = interaction.options.getRole("role", true);
       const listKey = subcommand === "allow-role" ? "allowRoles" : "denyRoles";
       const currentList = new Set(currentOverride[listKey] ?? []);
@@ -332,6 +339,16 @@ export const command: CommandDefinition = {
     }
 
     if (subcommand === "allow-user" || subcommand === "deny-user") {
+      if (!isModeration && subcommand === "allow-user") {
+        const embed = buildEmbed(context, {
+          title: "Allow List Not Available",
+          description:
+            "Public commands are already available to everyone. Use deny-* instead.",
+          variant: "warning"
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
       const user = interaction.options.getUser("user", true);
       const listKey = subcommand === "allow-user" ? "allowUsers" : "denyUsers";
       const currentList = new Set(currentOverride[listKey] ?? []);
@@ -359,7 +376,7 @@ export const command: CommandDefinition = {
       return;
     }
 
-    if (subcommand === "clear") {
+    if (subcommand === "reset") {
       const scope = interaction.options.getString("scope", true);
       const nextOverride: CommandOverride = { ...currentOverride };
       if (scope === "all") {
@@ -377,19 +394,12 @@ export const command: CommandDefinition = {
         await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
-      if (scope === "cooldown") {
-        delete nextOverride.cooldownSeconds;
-      }
-      if (scope === "allow-roles") {
+      if (scope === "allow") {
         delete nextOverride.allowRoles;
-      }
-      if (scope === "deny-roles") {
-        delete nextOverride.denyRoles;
-      }
-      if (scope === "allow-users") {
         delete nextOverride.allowUsers;
       }
-      if (scope === "deny-users") {
+      if (scope === "deny") {
+        delete nextOverride.denyRoles;
         delete nextOverride.denyUsers;
       }
       await updateGuildSettings(pool, guildContext.guild.id, {
