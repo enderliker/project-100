@@ -14,6 +14,7 @@ import {
   getGuildSettings,
   updateGuildSettings
 } from "./guild-settings-store";
+import type { CommandOverride } from "./guild-settings";
 
 const MAX_COOLDOWN_SECONDS = 3600;
 
@@ -21,7 +22,7 @@ function normalizeCommandName(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-function summarizeOverride(commandName: string, override: Record<string, unknown>): string {
+function summarizeOverride(commandName: string, override: CommandOverride): string {
   const lines: string[] = [`**Command:** ${commandName}`];
   const enabled = override.enabled;
   if (typeof enabled === "boolean") {
@@ -221,7 +222,7 @@ export const command: CommandDefinition = {
     }
 
     const settings = await getGuildSettings(pool, guildContext.guild.id);
-    const currentOverride = settings.commands[commandName] ?? {};
+    const currentOverride: CommandOverride = settings.commands[commandName] ?? {};
     const subcommand = interaction.options.getSubcommand(true);
 
     if (subcommand === "view") {
@@ -276,7 +277,7 @@ export const command: CommandDefinition = {
     if (subcommand === "allow-role" || subcommand === "deny-role") {
       const role = interaction.options.getRole("role", true);
       const listKey = subcommand === "allow-role" ? "allowRoles" : "denyRoles";
-      const currentList = new Set((currentOverride as Record<string, string[]>)[listKey] ?? []);
+      const currentList = new Set(currentOverride[listKey] ?? []);
       currentList.add(role.id);
       const nextOverride = { ...currentOverride, [listKey]: Array.from(currentList) };
       await updateGuildSettings(pool, guildContext.guild.id, {
@@ -296,7 +297,7 @@ export const command: CommandDefinition = {
     if (subcommand === "allow-user" || subcommand === "deny-user") {
       const user = interaction.options.getUser("user", true);
       const listKey = subcommand === "allow-user" ? "allowUsers" : "denyUsers";
-      const currentList = new Set((currentOverride as Record<string, string[]>)[listKey] ?? []);
+      const currentList = new Set(currentOverride[listKey] ?? []);
       currentList.add(user.id);
       const nextOverride = { ...currentOverride, [listKey]: Array.from(currentList) };
       await updateGuildSettings(pool, guildContext.guild.id, {
@@ -315,7 +316,7 @@ export const command: CommandDefinition = {
 
     if (subcommand === "clear") {
       const scope = interaction.options.getString("scope", true);
-      const nextOverride = { ...currentOverride } as Record<string, unknown>;
+      const nextOverride: CommandOverride = { ...currentOverride };
       if (scope === "all") {
         await updateGuildSettings(pool, guildContext.guild.id, {
           commands: {

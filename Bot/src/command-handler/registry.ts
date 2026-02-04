@@ -68,8 +68,21 @@ export async function loadCommandDefinitions(
   }
 
   const entries = fs.readdirSync(commandsDir, { withFileTypes: true });
+  const ignoredFiles = new Set([
+    "command-utils.js",
+    "guild-settings-store.js",
+    "guild-settings.js",
+    "storage.js",
+    "translation.js",
+    "types.js"
+  ]);
   const files = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        entry.name.endsWith(".js") &&
+        !ignoredFiles.has(entry.name)
+    )
     .map((entry) => entry.name)
     .sort();
 
