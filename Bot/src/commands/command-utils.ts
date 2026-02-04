@@ -251,22 +251,6 @@ export function hasAdministratorPermission(member: GuildMember): boolean {
   return member.permissions.has("Administrator");
 }
 
-export function hasModAccess(
-  member: GuildMember,
-  config: { modroleId: string | null; adminroleId: string | null } | null
-): boolean {
-  if (config && (hasRole(member, config.modroleId) || hasRole(member, config.adminroleId))) {
-    return true;
-  }
-  return (
-    member.permissions.has("BanMembers") ||
-    member.permissions.has("KickMembers") ||
-    member.permissions.has("ModerateMembers") ||
-    member.permissions.has("ManageMessages") ||
-    hasAdministratorPermission(member)
-  );
-}
-
 export function hasAdminAccess(
   member: GuildMember,
   config: { adminroleId: string | null } | null

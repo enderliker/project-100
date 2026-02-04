@@ -21,6 +21,7 @@ import {
 import type { CommandOverride } from "./guild-settings";
 import { safeDefer, safeRespond } from "../command-handler/interaction-response";
 import { commandConfigStore } from "../command-handler/command-config-store";
+import { isModerationCommand } from "../command-handler/command-permissions";
 
 const MAX_COOLDOWN_SECONDS = 3600;
 
@@ -28,8 +29,19 @@ function normalizeCommandName(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-function summarizeOverride(commandName: string, override: CommandOverride): string {
+function summarizeOverride(
+  commandName: CommandName,
+  override: CommandOverride,
+  options: { isModeration: boolean }
+): string {
   const lines: string[] = [`**Command:** ${commandName}`];
+  lines.push(
+    `**Access:** ${
+      options.isModeration
+        ? "Moderation (permissions or explicit allow list)"
+        : "Public (default allow)"
+    }`
+  );
   const enabled = override.enabled;
   if (typeof enabled === "boolean") {
     lines.push(`**Enabled:** ${enabled ? "Yes" : "No"}`);
@@ -39,20 +51,24 @@ function summarizeOverride(commandName: string, override: CommandOverride): stri
     lines.push(`**Cooldown:** ${cooldown}s`);
   }
   const allowRoles = override.allowRoles as string[] | undefined;
-  if (allowRoles && allowRoles.length > 0) {
-    lines.push(`**Allow Roles:** ${allowRoles.map((id) => `<@&${id}>`).join(", ")}`);
-  }
   const denyRoles = override.denyRoles as string[] | undefined;
   if (denyRoles && denyRoles.length > 0) {
     lines.push(`**Deny Roles:** ${denyRoles.map((id) => `<@&${id}>`).join(", ")}`);
   }
   const allowUsers = override.allowUsers as string[] | undefined;
-  if (allowUsers && allowUsers.length > 0) {
-    lines.push(`**Allow Users:** ${allowUsers.map((id) => `<@${id}>`).join(", ")}`);
-  }
   const denyUsers = override.denyUsers as string[] | undefined;
   if (denyUsers && denyUsers.length > 0) {
     lines.push(`**Deny Users:** ${denyUsers.map((id) => `<@${id}>`).join(", ")}`);
+  }
+  if (options.isModeration) {
+    if (allowRoles && allowRoles.length > 0) {
+      lines.push(`**Allow Roles:** ${allowRoles.map((id) => `<@&${id}>`).join(", ")}`);
+    }
+    if (allowUsers && allowUsers.length > 0) {
+      lines.push(`**Allow Users:** ${allowUsers.map((id) => `<@${id}>`).join(", ")}`);
+    }
+  } else if ((allowRoles && allowRoles.length > 0) || (allowUsers && allowUsers.length > 0)) {
+    lines.push("**Allow Lists:** Ignored for public commands.");
   }
   return lines.join("\n");
 }
@@ -120,7 +136,7 @@ export const command: CommandDefinition = {
     .addSubcommand((subcommand) =>
       subcommand
         .setName("allow-role")
-        .setDescription("Allow a role to use a command.")
+        .setDescription("Allow a role to use a moderation command.")
         .addStringOption((option) =>
           option
             .setName("command")
@@ -150,7 +166,7 @@ export const command: CommandDefinition = {
     .addSubcommand((subcommand) =>
       subcommand
         .setName("allow-user")
-        .setDescription("Allow a user to use a command.")
+        .setDescription("Allow a user to use a moderation command.")
         .addStringOption((option) =>
           option
             .setName("command")
@@ -245,6 +261,7 @@ export const command: CommandDefinition = {
       return;
     }
     const commandName: CommandName = normalizedCommand;
+    const isModeration = isModerationCommand(commandName);
 
     await safeDefer(interaction, { ephemeral: true });
 
@@ -255,7 +272,9 @@ export const command: CommandDefinition = {
     if (subcommand === "view") {
       const embed = buildEmbed(context, {
         title: "Command Overrides",
-        description: trimEmbedDescription(summarizeOverride(commandName, currentOverride))
+        description: trimEmbedDescription(
+          summarizeOverride(commandName, currentOverride, { isModeration })
+        )
       });
       await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
@@ -304,6 +323,15 @@ export const command: CommandDefinition = {
     }
 
     if (subcommand === "allow-role" || subcommand === "deny-role") {
+      if (!isModeration && subcommand === "allow-role") {
+        const embed = buildEmbed(context, {
+          title: "Allow List Not Available",
+          description: "Public commands are default-allow and cannot use allow lists.",
+          variant: "warning"
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
       const role = interaction.options.getRole("role", true);
       const listKey = subcommand === "allow-role" ? "allowRoles" : "denyRoles";
       const currentList = new Set(currentOverride[listKey] ?? []);
@@ -332,6 +360,15 @@ export const command: CommandDefinition = {
     }
 
     if (subcommand === "allow-user" || subcommand === "deny-user") {
+      if (!isModeration && subcommand === "allow-user") {
+        const embed = buildEmbed(context, {
+          title: "Allow List Not Available",
+          description: "Public commands are default-allow and cannot use allow lists.",
+          variant: "warning"
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
       const user = interaction.options.getUser("user", true);
       const listKey = subcommand === "allow-user" ? "allowUsers" : "denyUsers";
       const currentList = new Set(currentOverride[listKey] ?? []);
@@ -361,6 +398,18 @@ export const command: CommandDefinition = {
 
     if (subcommand === "clear") {
       const scope = interaction.options.getString("scope", true);
+      if (
+        !isModeration &&
+        (scope === "allow-roles" || scope === "allow-users")
+      ) {
+        const embed = buildEmbed(context, {
+          title: "Allow List Not Available",
+          description: "Public commands are default-allow and cannot use allow lists.",
+          variant: "warning"
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
       const nextOverride: CommandOverride = { ...currentOverride };
       if (scope === "all") {
         await updateGuildSettings(pool, guildContext.guild.id, {

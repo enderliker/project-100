@@ -4,15 +4,13 @@ import {
   buildEmbed,
   fetchMemberSafe,
   formatUserLabel,
-  hasModAccess,
   handleCommandError,
   logModerationAction,
   requireGuildContext,
-  requireInvokerPermissions,
   requirePostgres,
   validateModerationTarget
 } from "./command-utils";
-import { createWarning, getGuildConfig } from "./storage";
+import { createWarning } from "./storage";
 import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
@@ -32,26 +30,6 @@ export const command: CommandDefinition = {
     }
     const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
-      return;
-    }
-    const config = await getGuildConfig(pool, guildContext.guild.id);
-    if (!hasModAccess(guildContext.member, config)) {
-      const embed = buildEmbed(context, {
-        title: "Permission Denied",
-        description: "You do not have permission to warn members.",
-        variant: "error"
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
-      return;
-    }
-    const hasPermissions = await requireInvokerPermissions(
-      interaction,
-      context,
-      guildContext.member,
-      ["ModerateMembers"],
-      "warn members"
-    );
-    if (!hasPermissions) {
       return;
     }
     const target = interaction.options.getUser("user", true);
