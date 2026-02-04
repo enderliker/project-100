@@ -52,6 +52,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const feature = featureValue.trim().toLowerCase();
+    if (!/^[a-z0-9_-]+$/.test(feature)) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Feature",
+        description: "Feature names must use only letters, numbers, underscores, or dashes.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const enabled = interaction.options.getBoolean("enabled", true);
     if (enabled === null) {
       const embed = buildEmbed(context, {
@@ -62,7 +72,6 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const feature = featureValue.toLowerCase();
     await setGuildToggle(pool, guildContext.guild.id, feature, enabled);
     await context.redis.del(`counter:${guildContext.guild.id}:${feature}`);
     const embed = buildEmbed(context, {
