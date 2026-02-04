@@ -1,14 +1,28 @@
 import { SlashCommandBuilder } from "discord.js";
+import type { TextBasedChannel } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
   formatChannelLabel,
   hasModAccess,
   logModerationAction,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+
+type OverwriteCapableChannel = TextBasedChannel & {
+  permissionOverwrites: {
+    edit: (...args: unknown[]) => Promise<unknown>;
+  };
+};
+
+function canEditOverwrites(
+  channel: TextBasedChannel
+): channel is OverwriteCapableChannel {
+  return "permissionOverwrites" in channel;
+}
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -39,8 +53,22 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["ManageChannels"],
+      "lock channels"
+    );
+    if (!botMember) {
+      return;
+    }
     const targetChannel = interaction.options.getChannel("channel") ?? interaction.channel;
-    if (!targetChannel || !targetChannel.isTextBased()) {
+    if (
+      !targetChannel ||
+      !targetChannel.isTextBased() ||
+      !canEditOverwrites(targetChannel)
+    ) {
       const embed = buildEmbed(context, {
         title: "Unsupported Channel",
         description: "This command can only be used in text channels.",
@@ -49,7 +77,7 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    await (targetChannel as any).permissionOverwrites.edit(
+    await targetChannel.permissionOverwrites.edit(
       guildContext.guild.roles.everyone,
       { SendMessages: false },
       "Channel locked"

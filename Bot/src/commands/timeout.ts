@@ -5,6 +5,7 @@ import {
   formatUserLabel,
   hasModAccess,
   logModerationAction,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -49,11 +50,48 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["ModerateMembers"],
+      "timeout members"
+    );
+    if (!botMember) {
+      return;
+    }
     const targetMember = interaction.options.getMember("user", true);
     if (!targetMember) {
       const embed = buildEmbed(context, {
         title: "Member Not Found",
         description: "Please specify a valid member to timeout.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    if (targetMember.id === interaction.user.id) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Target",
+        description: "You cannot timeout yourself.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    if (context.client.user && targetMember.id === context.client.user.id) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Target",
+        description: "You cannot timeout the bot.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    if (targetMember.moderatable === false) {
+      const embed = buildEmbed(context, {
+        title: "Cannot Timeout Member",
+        description: "I cannot timeout this member due to role hierarchy or permissions.",
         variant: "warning"
       });
       await interaction.reply({ embeds: [embed], ephemeral: true });
@@ -70,7 +108,17 @@ export const command: CommandDefinition = {
       return;
     }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
-    await targetMember.timeout(durationSeconds * 1000, reason);
+    try {
+      await targetMember.timeout(durationSeconds * 1000, reason);
+    } catch {
+      const embed = buildEmbed(context, {
+        title: "Timeout Failed",
+        description: "Unable to timeout that member. Please check my permissions.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     await logModerationAction(
       context,
       guildContext.guild,

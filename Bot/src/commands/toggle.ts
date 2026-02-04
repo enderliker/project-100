@@ -18,6 +18,13 @@ export const command: CommandDefinition = {
         .setDescription("Feature to toggle")
         .setMinLength(1)
         .setMaxLength(50)
+        .addChoices(
+          { name: "welcome", value: "welcome" },
+          { name: "goodbye", value: "goodbye" },
+          { name: "autorole", value: "autorole" },
+          { name: "logs", value: "logs" },
+          { name: "rules", value: "rules" }
+        )
         .setRequired(true)
     )
     .addBooleanOption((option) =>
@@ -52,6 +59,17 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const feature = featureValue.trim().toLowerCase();
+    const allowedFeatures = new Set(["welcome", "goodbye", "autorole", "logs", "rules"]);
+    if (!allowedFeatures.has(feature)) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Feature",
+        description: "Please choose a feature from the available options.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const enabled = interaction.options.getBoolean("enabled", true);
     if (enabled === null) {
       const embed = buildEmbed(context, {
@@ -62,7 +80,6 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const feature = featureValue.toLowerCase();
     await setGuildToggle(pool, guildContext.guild.id, feature, enabled);
     await context.redis.del(`counter:${guildContext.guild.id}:${feature}`);
     const embed = buildEmbed(context, {
