@@ -1,0 +1,70 @@
+import { SlashCommandBuilder } from "discord.js";
+import type { CommandDefinition } from "./types";
+import {
+  buildEmbed,
+  formatUserLabel,
+  hasModAccess,
+  logModerationAction,
+  requireGuildContext,
+  requirePostgres
+} from "./command-utils";
+import { getGuildConfig } from "./storage";
+
+const MAX_TIMEOUT_SECONDS = 60 * 60 * 24 * 28;
+
+export const command: CommandDefinition = {
+  data: new SlashCommandBuilder()
+    .setName("timeout")
+    .setDescription("Applies a Discord-native timeout to a user.")
+    .addUserOption((option) =>
+      option.setName("user").setDescription("User to timeout").setRequired(true)
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("duration")
+        .setDescription("Timeout duration in seconds")
+        .setMinValue(1)
+        .setMaxValue(MAX_TIMEOUT_SECONDS)
+        .setRequired(true)
+    )
+    .addStringOption((option) =>
+      option.setName("reason").setDescription("Reason for the timeout").setRequired(false)
+    ),
+  execute: async (interaction, context) => {
+    const guildContext = await requireGuildContext(interaction, context);
+    if (!guildContext) {
+      return;
+    }
+    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    if (!pool) {
+      return;
+    }
+    const config = await getGuildConfig(pool, guildContext.guild.id);
+    if (!hasModAccess(guildContext.member, config)) {
+      const embed = buildEmbed(context, {
+        title: "Permission Denied",
+        description: "You do not have permission to timeout members.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const targetMember = interaction.options.getMember("user", true);
+    const durationSeconds = interaction.options.getInteger("duration", true);
+    const reason = interaction.options.getString("reason") ?? "No reason provided.";
+    await targetMember.timeout(durationSeconds * 1000, reason);
+    await logModerationAction(
+      context,
+      guildContext.guild,
+      guildContext.member.id,
+      "Timeout",
+      formatUserLabel(targetMember.user),
+      `${reason} (duration: ${durationSeconds}s)`
+    );
+    const embed = buildEmbed(context, {
+      title: "User Timed Out",
+      description: `Timed out ${formatUserLabel(targetMember.user)} for ${durationSeconds}s.`
+    });
+    await interaction.reply({ embeds: [embed] });
+  }
+};
