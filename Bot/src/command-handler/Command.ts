@@ -19,7 +19,7 @@ export interface Command {
   execute: (context: CommandContext) => Promise<void>;
   autocomplete?: (
     context: AutocompleteContext
-  ) => Promise<ApplicationCommandOptionChoiceData[]> | Promise<void>;
+  ) => Promise<ApplicationCommandOptionChoiceData[] | void>;
   permissions?: PermissionResolvable[];
   guildOnly?: boolean;
   dmOnly?: boolean;

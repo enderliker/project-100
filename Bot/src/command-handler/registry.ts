@@ -150,7 +150,7 @@ export function registerCommandDefinitions(
             if (!context.interaction.isAutocomplete()) {
               return;
             }
-            await autocomplete(context.interaction, context.legacyContext);
+            return autocomplete(context.interaction, context.legacyContext);
           }
         : undefined,
       execute: async (context) => {
