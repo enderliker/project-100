@@ -1,4 +1,10 @@
-import type { Client, ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
+import type {
+  ApplicationCommandOptionChoiceData,
+  AutocompleteInteraction,
+  Client,
+  ChatInputCommandInteraction,
+  SlashCommandBuilder
+} from "discord.js";
 import type { RedisClient } from "@project/shared";
 import type { Pool } from "pg";
 
@@ -21,4 +27,8 @@ export interface CommandDefinition {
     interaction: ChatInputCommandInteraction,
     context: CommandExecutionContext
   ) => Promise<void>;
+  autocomplete?: (
+    interaction: AutocompleteInteraction,
+    context: CommandExecutionContext
+  ) => Promise<ApplicationCommandOptionChoiceData[]> | Promise<void>;
 }
