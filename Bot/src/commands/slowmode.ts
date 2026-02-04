@@ -4,9 +4,12 @@ import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
   hasModAccess,
+  handleCommandError,
   logModerationAction,
   requireBotPermissions,
+  requireChannelPermissions,
   requireGuildContext,
+  requireInvokerPermissions,
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
@@ -54,6 +57,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["ManageChannels"],
+      "update slowmode"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const botMember = await requireBotPermissions(
       interaction,
       context,
@@ -74,6 +87,17 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasChannelPermissions = await requireChannelPermissions(
+      interaction,
+      context,
+      channel,
+      botMember,
+      ["ManageChannels"],
+      "update slowmode"
+    );
+    if (!hasChannelPermissions) {
+      return;
+    }
     const seconds = interaction.options.getInteger("seconds", true);
     if (seconds === null) {
       const embed = buildEmbed(context, {
@@ -86,13 +110,11 @@ export const command: CommandDefinition = {
     }
     try {
       await channel.setRateLimitPerUser(seconds, "Slowmode update");
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Slowmode Failed",
-        description: "Unable to update slowmode. Please check my permissions.",
-        variant: "error"
+        description: "Unable to update slowmode. Please check my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     await logModerationAction(

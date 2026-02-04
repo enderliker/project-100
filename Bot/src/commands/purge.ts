@@ -5,9 +5,12 @@ import {
   buildEmbed,
   formatUserLabel,
   hasModAccess,
+  handleCommandError,
   logModerationAction,
   requireBotPermissions,
+  requireChannelPermissions,
   requireGuildContext,
+  requireInvokerPermissions,
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
@@ -62,6 +65,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["ManageMessages"],
+      "purge messages"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const botMember = await requireBotPermissions(
       interaction,
       context,
@@ -80,6 +93,17 @@ export const command: CommandDefinition = {
         variant: "warning"
       });
       await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const hasChannelPermissions = await requireChannelPermissions(
+      interaction,
+      context,
+      channel,
+      botMember,
+      ["ManageMessages"],
+      "purge messages"
+    );
+    if (!hasChannelPermissions) {
       return;
     }
     const target = interaction.options.getUser("user", true);
@@ -102,20 +126,27 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const fetched = await channel.messages.fetch({ limit: amount });
+    let fetched: Map<string, Message>;
+    try {
+      fetched = await channel.messages.fetch({ limit: amount });
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
+        title: "Purge Failed",
+        description: "Unable to fetch messages for purge."
+      });
+      return;
+    }
     const messages = Array.from(fetched.values()).filter(
       (message) => message.author.id === target.id
     );
     let deleted: Map<string, Message>;
     try {
       deleted = await channel.bulkDelete(messages, true);
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Purge Failed",
-        description: "Unable to delete messages. Please check my permissions.",
-        variant: "error"
+        description: "Unable to delete messages. Please check my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     const deletedCount = deleted.size;

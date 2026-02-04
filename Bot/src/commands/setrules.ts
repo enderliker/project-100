@@ -3,7 +3,9 @@ import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
   hasAdminAccess,
+  handleCommandError,
   requireBotPermissions,
+  requireChannelPermissions,
   requireGuildContext,
   requirePostgres,
   trimEmbedDescription
@@ -341,10 +343,10 @@ export const command: CommandDefinition = {
 
     if (subcommand === "publish") {
       const channelOption = interaction.options.getChannel("channel");
-      const channel =
+      let channel =
         channelOption ??
         (settings.rules.channelId
-          ? await context.client.channels.fetch(settings.rules.channelId)
+          ? await context.client.channels.fetch(settings.rules.channelId).catch(() => null)
           : null);
       if (!channel || !channel.isTextBased() || !channel.guild) {
         const embed = buildEmbed(context, {
@@ -369,15 +371,37 @@ export const command: CommandDefinition = {
       if (!botMember) {
         return;
       }
+      const hasChannelPermissions = await requireChannelPermissions(
+        interaction,
+        context,
+        channel,
+        botMember,
+        ["SendMessages", "EmbedLinks"],
+        "publish rules"
+      );
+      if (!hasChannelPermissions) {
+        return;
+      }
       if (pin) {
-        const pinPermissions = await requireBotPermissions(
+        const pinAllowed = await requireBotPermissions(
           interaction,
           context,
           guild,
           ["ManageMessages"],
           "pin the rules"
         );
-        if (!pinPermissions) {
+        if (!pinAllowed) {
+          return;
+        }
+        const pinChannelPermissions = await requireChannelPermissions(
+          interaction,
+          context,
+          channel,
+          botMember,
+          ["ManageMessages"],
+          "pin the rules"
+        );
+        if (!pinChannelPermissions) {
           return;
         }
       }
@@ -396,9 +420,18 @@ export const command: CommandDefinition = {
         title: title || settings.rules.title,
         description: trimEmbedDescription(formatRules(settings.rules.entries))
       });
-      const message = await channel.send({ embeds: [rulesEmbed] });
-      if (pin && channel.isTextBased()) {
-        await message.pin().catch(() => undefined);
+      let message;
+      try {
+        message = await channel.send({ embeds: [rulesEmbed] });
+        if (pin && channel.isTextBased()) {
+          await message.pin().catch(() => undefined);
+        }
+      } catch (error) {
+        await handleCommandError(interaction, context, error, {
+          title: "Publish Failed",
+          description: "Unable to publish the rules in that channel."
+        });
+        return;
       }
 
       await updateGuildSettings(pool, guildId, {

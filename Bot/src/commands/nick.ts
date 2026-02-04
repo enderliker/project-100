@@ -2,12 +2,16 @@ import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
+  fetchMemberSafe,
   formatUserLabel,
   hasModAccess,
+  handleCommandError,
   logModerationAction,
   requireBotPermissions,
   requireGuildContext,
-  requirePostgres
+  requireInvokerPermissions,
+  requirePostgres,
+  validateModerationTarget
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
 
@@ -43,6 +47,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["ManageNicknames"],
+      "change nicknames"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const botMember = await requireBotPermissions(
       interaction,
       context,
@@ -53,7 +67,17 @@ export const command: CommandDefinition = {
     if (!botMember) {
       return;
     }
-    const targetMember = interaction.options.getMember("user", true);
+    const target = interaction.options.getUser("user", true);
+    if (!target) {
+      const embed = buildEmbed(context, {
+        title: "User Not Found",
+        description: "Please specify a valid user to update.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const targetMember = await fetchMemberSafe(guildContext.guild, target.id);
     if (!targetMember) {
       const embed = buildEmbed(context, {
         title: "Member Not Found",
@@ -63,25 +87,27 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    if (targetMember.manageable === false) {
-      const embed = buildEmbed(context, {
-        title: "Cannot Update Nickname",
-        description: "I cannot change this member's nickname due to role hierarchy.",
-        variant: "warning"
-      });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+    const allowed = await validateModerationTarget({
+      interaction,
+      context,
+      guild: guildContext.guild,
+      invoker: guildContext.member,
+      botMember,
+      targetMember,
+      action: "change the nickname for",
+      allowBotTargetWithAdmin: true
+    });
+    if (!allowed) {
       return;
     }
     const nickname = interaction.options.getString("nickname");
     try {
       await targetMember.setNickname(nickname ?? null, "Nickname update");
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Nickname Update Failed",
-        description: "Unable to update that nickname. Please check my permissions.",
-        variant: "error"
+        description: "Unable to update that nickname. Please check my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     await logModerationAction(

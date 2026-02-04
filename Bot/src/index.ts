@@ -571,7 +571,7 @@ async function main(): Promise<void> {
   });
 
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
     makeCache: Options.cacheWithLimits({
       MessageManager: 0,
       PresenceManager: 0,

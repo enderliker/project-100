@@ -5,9 +5,12 @@ import {
   buildEmbed,
   formatChannelLabel,
   hasModAccess,
+  handleCommandError,
   logModerationAction,
   requireBotPermissions,
+  requireChannelPermissions,
   requireGuildContext,
+  requireInvokerPermissions,
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
@@ -53,6 +56,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["ManageChannels"],
+      "lock channels"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const botMember = await requireBotPermissions(
       interaction,
       context,
@@ -77,11 +90,30 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    await targetChannel.permissionOverwrites.edit(
-      guildContext.guild.roles.everyone,
-      { SendMessages: false },
-      "Channel locked"
+    const hasChannelPermissions = await requireChannelPermissions(
+      interaction,
+      context,
+      targetChannel,
+      botMember,
+      ["ManageChannels"],
+      "lock channels"
     );
+    if (!hasChannelPermissions) {
+      return;
+    }
+    try {
+      await targetChannel.permissionOverwrites.edit(
+        guildContext.guild.roles.everyone,
+        { SendMessages: false },
+        "Channel locked"
+      );
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
+        title: "Lock Failed",
+        description: "Unable to lock that channel. Please check my permissions."
+      });
+      return;
+    }
     await logModerationAction(
       context,
       guildContext.guild,

@@ -2,12 +2,16 @@ import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
+  fetchMemberSafe,
   formatUserLabel,
   hasModAccess,
+  handleCommandError,
   logModerationAction,
   requireBotPermissions,
   requireGuildContext,
-  requirePostgres
+  requireInvokerPermissions,
+  requirePostgres,
+  validateModerationTarget
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
 
@@ -40,6 +44,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["KickMembers"],
+      "kick members"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const botMember = await requireBotPermissions(
       interaction,
       context,
@@ -50,7 +64,17 @@ export const command: CommandDefinition = {
     if (!botMember) {
       return;
     }
-    const targetMember = interaction.options.getMember("user", true);
+    const target = interaction.options.getUser("user", true);
+    if (!target) {
+      const embed = buildEmbed(context, {
+        title: "User Not Found",
+        description: "Please specify a valid user to kick.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const targetMember = await fetchMemberSafe(guildContext.guild, target.id);
     if (!targetMember) {
       const embed = buildEmbed(context, {
         title: "Member Not Found",
@@ -60,43 +84,27 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    if (targetMember.id === interaction.user.id) {
-      const embed = buildEmbed(context, {
-        title: "Invalid Target",
-        description: "You cannot kick yourself.",
-        variant: "warning"
-      });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-    if (context.client.user && targetMember.id === context.client.user.id) {
-      const embed = buildEmbed(context, {
-        title: "Invalid Target",
-        description: "You cannot kick the bot.",
-        variant: "warning"
-      });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-    if (targetMember.kickable === false) {
-      const embed = buildEmbed(context, {
-        title: "Cannot Kick Member",
-        description: "I cannot kick this member due to role hierarchy or permissions.",
-        variant: "warning"
-      });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+    const allowed = await validateModerationTarget({
+      interaction,
+      context,
+      guild: guildContext.guild,
+      invoker: guildContext.member,
+      botMember,
+      targetMember,
+      action: "kick",
+      allowBotTargetWithAdmin: true
+    });
+    if (!allowed) {
       return;
     }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
     try {
       await targetMember.kick(reason);
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Kick Failed",
-        description: "Unable to kick that member. Please check my permissions.",
-        variant: "error"
+        description: "Unable to kick that member. Please check my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     await logModerationAction(
