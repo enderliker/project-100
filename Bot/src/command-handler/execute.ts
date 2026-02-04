@@ -1,6 +1,5 @@
 import crypto from "crypto";
 import type { AutocompleteInteraction, ChatInputCommandInteraction } from "discord.js";
-import { DiscordAPIError } from "discord.js";
 import { RESTJSONErrorCodes } from "discord-api-types/v10";
 import { buildBaseEmbed } from "../embeds";
 import { createLogger } from "@project/shared";
@@ -9,6 +8,7 @@ import type { Command } from "./Command";
 import { createContext } from "./Context";
 import { runMiddleware } from "./middleware";
 import { getCommand } from "./registry";
+import { getErrorInfo } from "../discord-error-utils";
 
 const handlerLogger = createLogger("discord");
 const logCommandEvents = process.env.LOG_COMMAND_EVENTS === "1";
@@ -29,10 +29,11 @@ function mapDiscordError(error: unknown): {
   description: string;
   variant: "warning" | "error";
 } | null {
-  if (!(error instanceof DiscordAPIError)) {
+  const { code, status } = getErrorInfo(error);
+  if (typeof code !== "string" && typeof code !== "number") {
     return null;
   }
-  switch (error.code) {
+  switch (code) {
     case RESTJSONErrorCodes.MissingPermissions:
       return {
         title: "Missing Permissions",
@@ -70,7 +71,7 @@ function mapDiscordError(error: unknown): {
         variant: "warning"
       };
     default:
-      if (error.status === 429) {
+      if (status === 429) {
         return {
           title: "Rate Limited",
           description: "Discord rate limited the request. Please try again shortly.",
@@ -143,7 +144,7 @@ async function executeCommand(
         `event=command_complete command=${command.name} user=${context.user.id} guild=${context.guild?.id ?? "dm"} interaction=${interaction.id}`
       );
     }
-  } catch (error) {
+  } catch (error: unknown) {
     const stack = error instanceof Error ? error.stack ?? error.message : String(error);
     handlerLogger.error(
       `event=command_failed command=${command.name} user=${context.user.id} guild=${context.guild?.id ?? "dm"} interaction=${interaction.id} correlation=${correlationId}`
@@ -182,7 +183,7 @@ async function executeAutocomplete(
     if (Array.isArray(result)) {
       await interaction.respond(result);
     }
-  } catch (error) {
+  } catch (error: unknown) {
     const stack = error instanceof Error ? error.stack ?? error.message : String(error);
     handlerLogger.error(
       `event=autocomplete_failed command=${command.name} user=${context.user.id} guild=${context.guild?.id ?? "dm"} interaction=${interaction.id} correlation=${correlationId}`
