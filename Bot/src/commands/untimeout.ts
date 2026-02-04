@@ -5,6 +5,7 @@ import {
   formatUserLabel,
   hasModAccess,
   logModerationAction,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -42,6 +43,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["ModerateMembers"],
+      "remove timeouts"
+    );
+    if (!botMember) {
+      return;
+    }
     const targetMember = interaction.options.getMember("user", true);
     if (!targetMember) {
       const embed = buildEmbed(context, {
@@ -52,8 +63,27 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    if (targetMember.moderatable === false) {
+      const embed = buildEmbed(context, {
+        title: "Cannot Remove Timeout",
+        description: "I cannot modify this member due to role hierarchy or permissions.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
-    await targetMember.timeout(null, reason);
+    try {
+      await targetMember.timeout(null, reason);
+    } catch {
+      const embed = buildEmbed(context, {
+        title: "Untimeout Failed",
+        description: "Unable to remove the timeout. Please check my permissions.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     await logModerationAction(
       context,
       guildContext.guild,

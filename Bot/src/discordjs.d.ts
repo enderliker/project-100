@@ -57,6 +57,10 @@ declare module "discord.js" {
     permissions: PermissionsBitField;
     user: User;
     joinedAt?: Date;
+    bannable?: boolean;
+    kickable?: boolean;
+    moderatable?: boolean;
+    manageable?: boolean;
     roles: GuildMemberRoleManager;
     kick(reason?: string): Promise<void>;
     timeout(duration: number | null, reason?: string): Promise<void>;
@@ -79,6 +83,7 @@ declare module "discord.js" {
 
   export interface GuildMemberManager {
     fetch(id: string): Promise<GuildMember>;
+    me?: GuildMember | null;
     ban(
       user: string | User,
       options?: { reason?: string; deleteMessageSeconds?: number }
@@ -173,6 +178,7 @@ declare module "discord.js" {
 
   export class Client {
     ws: { ping: number };
+    user?: User;
     constructor(options: ClientOptions);
     channels: ChannelManager;
     users: UserManager;

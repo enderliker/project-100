@@ -5,7 +5,8 @@ import {
   formatUserLabel,
   hasModAccess,
   requireGuildContext,
-  requirePostgres
+  requirePostgres,
+  trimEmbedDescription
 } from "./command-utils";
 import { getGuildConfig, listWarnings } from "./storage";
 
@@ -60,7 +61,7 @@ export const command: CommandDefinition = {
     );
     const embed = buildEmbed(context, {
       title: "Warnings",
-      description: lines.join("\n")
+      description: trimEmbedDescription(lines.join("\n"))
     });
     await interaction.reply({ embeds: [embed] });
   }
