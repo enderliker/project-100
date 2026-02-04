@@ -106,7 +106,19 @@ function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.map((entry) => String(entry)).filter((entry) => entry.length > 0);
+  const normalized = value
+    .map((entry) => String(entry).trim())
+    .filter((entry) => entry.length > 0 && /^\d+$/.test(entry));
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const entry of normalized) {
+    if (seen.has(entry)) {
+      continue;
+    }
+    seen.add(entry);
+    deduped.push(entry);
+  }
+  return deduped;
 }
 
 function normalizeCommandOverride(value: CommandOverride | undefined): CommandOverride | undefined {

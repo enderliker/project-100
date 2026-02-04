@@ -307,8 +307,15 @@ export const command: CommandDefinition = {
       const role = interaction.options.getRole("role", true);
       const listKey = subcommand === "allow-role" ? "allowRoles" : "denyRoles";
       const currentList = new Set(currentOverride[listKey] ?? []);
+      const oppositeKey = subcommand === "allow-role" ? "denyRoles" : "allowRoles";
+      const oppositeList = new Set(currentOverride[oppositeKey] ?? []);
       currentList.add(role.id);
-      const nextOverride = { ...currentOverride, [listKey]: Array.from(currentList) };
+      oppositeList.delete(role.id);
+      const nextOverride = {
+        ...currentOverride,
+        [listKey]: Array.from(currentList),
+        [oppositeKey]: Array.from(oppositeList)
+      };
       await updateGuildSettings(pool, guildContext.guild.id, {
         commands: {
           [commandName]: nextOverride
@@ -328,8 +335,15 @@ export const command: CommandDefinition = {
       const user = interaction.options.getUser("user", true);
       const listKey = subcommand === "allow-user" ? "allowUsers" : "denyUsers";
       const currentList = new Set(currentOverride[listKey] ?? []);
+      const oppositeKey = subcommand === "allow-user" ? "denyUsers" : "allowUsers";
+      const oppositeList = new Set(currentOverride[oppositeKey] ?? []);
       currentList.add(user.id);
-      const nextOverride = { ...currentOverride, [listKey]: Array.from(currentList) };
+      oppositeList.delete(user.id);
+      const nextOverride = {
+        ...currentOverride,
+        [listKey]: Array.from(currentList),
+        [oppositeKey]: Array.from(oppositeList)
+      };
       await updateGuildSettings(pool, guildContext.guild.id, {
         commands: {
           [commandName]: nextOverride
