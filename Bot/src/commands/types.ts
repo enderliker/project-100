@@ -30,5 +30,5 @@ export interface CommandDefinition {
   autocomplete?: (
     interaction: AutocompleteInteraction,
     context: CommandExecutionContext
-  ) => Promise<ApplicationCommandOptionChoiceData[]> | Promise<void>;
+  ) => Promise<ApplicationCommandOptionChoiceData[] | void>;
 }
