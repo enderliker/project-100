@@ -2,22 +2,26 @@ import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
-  formatChannelLabel,
   hasAdminAccess,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
-import { getGuildConfig, setGuildLogsChannel } from "./storage";
-import { clearGuildSettingsCache, updateGuildSettings } from "./guild-settings-store";
+import { getGuildConfig } from "./storage";
+import {
+  clearGuildSettingsCache,
+  updateGuildSettings
+} from "./guild-settings-store";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
-    .setName("setlogs")
-    .setDescription("Sets the logs channel for moderation actions.")
-    .addChannelOption((option) =>
+    .setName("setlanguage")
+    .setDescription("Sets the default language for this server.")
+    .addStringOption((option) =>
       option
-        .setName("channel")
-        .setDescription("Channel to receive moderation logs")
+        .setName("language")
+        .setDescription("Language code (e.g. en, es, fr)")
+        .setMinLength(2)
+        .setMaxLength(10)
         .setRequired(true)
     ),
   execute: async (interaction, context) => {
@@ -39,24 +43,17 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const channel = interaction.options.getChannel("channel", true);
-    if (!channel) {
-      const embed = buildEmbed(context, {
-        title: "Channel Not Found",
-        description: "Please specify a valid channel for moderation logs.",
-        variant: "warning"
-      });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-    await setGuildLogsChannel(pool, guildContext.guild.id, channel.id);
+    const language = interaction.options.getString("language", true).trim().toLowerCase();
     await updateGuildSettings(pool, guildContext.guild.id, {
-      loggingChannelId: channel.id
+      language,
+      translation: {
+        defaultTarget: language
+      }
     });
     clearGuildSettingsCache(guildContext.guild.id);
     const embed = buildEmbed(context, {
-      title: "Logs Channel Updated",
-      description: `Logs channel set to ${formatChannelLabel(channel)}.`
+      title: "Language Updated",
+      description: `Default language set to **${language}**.`
     });
     await interaction.reply({ embeds: [embed], ephemeral: true });
   }

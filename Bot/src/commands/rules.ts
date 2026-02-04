@@ -1,7 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
-import { buildEmbed, requireGuildContext, requirePostgres } from "./command-utils";
-import { getGuildConfig } from "./storage";
+import { buildEmbed, requireGuildContext, requirePostgres, trimEmbedDescription } from "./command-utils";
+import { getGuildSettings } from "./guild-settings-store";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -16,9 +16,18 @@ export const command: CommandDefinition = {
     if (!pool) {
       return;
     }
-    const config = await getGuildConfig(pool, guildContext.guild.id);
-    const rulesText = config?.rulesText;
-    if (!rulesText) {
+    const settings = await getGuildSettings(pool, guildContext.guild.id);
+    if (!settings.features.rules) {
+      const embed = buildEmbed(context, {
+        title: "Rules",
+        description: "Rules are currently disabled for this server.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const entries = settings.rules.entries;
+    if (!entries || entries.length === 0) {
       const embed = buildEmbed(context, {
         title: "Rules",
         description: "Rules have not been configured for this server.",
@@ -27,9 +36,12 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const description = trimEmbedDescription(
+      entries.map((entry, index) => `${index + 1}. ${entry}`).join("\n")
+    );
     const embed = buildEmbed(context, {
       title: "Rules",
-      description: rulesText
+      description
     });
     await interaction.reply({ embeds: [embed] });
   }

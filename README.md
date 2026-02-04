@@ -156,3 +156,31 @@ endpoint (HTTP 200 + JSON with `"ok": true`). To resolve:
 - PostgreSQL connections require SSL; CA verification is supported.
 - No secrets are logged; configuration comes only from `.env`.
 - Workers are stateless and idempotent.
+
+## Bot Command Configuration (Per-Guild)
+The bot stores server configuration in Postgres (table: `guild_configs`). You can manage
+guild settings using the following commands:
+
+### Core configuration commands
+- `/setlogs` — Configure the moderation log channel.
+- `/setrules` — Manage server rules (add, set, remove, clear, publish, and set the title).
+- `/setlanguage` — Set the default language (also used by `/translate`).
+- `/commandconfig` — Enable/disable commands, set cooldowns, and add allow/deny lists.
+- `/toggle` — Toggle built-in features (welcome, goodbye, autorole, logs, rules).
+
+### Rules workflow
+1. `/setrules add text:<rule>` (repeat as needed)
+2. `/setrules view` (verify the list)
+3. `/setrules publish channel:#rules pin:true` (optional)
+
+### Command overrides
+Use `/commandconfig` to control command availability per server. Examples:
+- `/commandconfig disable command:ban`
+- `/commandconfig cooldown command:warn seconds:30`
+- `/commandconfig allow-role command:purge role:@Mods`
+
+### Translation defaults
+`/translate` is always available. The bot uses LibreTranslate by default and will
+auto-detect the source language when omitted. Configure a custom provider via:
+- `TRANSLATE_API_URL` — POST endpoint compatible with LibreTranslate
+- `TRANSLATE_API_KEY` — Optional API key for the provider
