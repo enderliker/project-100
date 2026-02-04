@@ -18,6 +18,13 @@ export const command: CommandDefinition = {
         .setDescription("Feature to toggle")
         .setMinLength(1)
         .setMaxLength(50)
+        .addChoices(
+          { name: "welcome", value: "welcome" },
+          { name: "goodbye", value: "goodbye" },
+          { name: "autorole", value: "autorole" },
+          { name: "logs", value: "logs" },
+          { name: "rules", value: "rules" }
+        )
         .setRequired(true)
     )
     .addBooleanOption((option) =>
@@ -53,10 +60,11 @@ export const command: CommandDefinition = {
       return;
     }
     const feature = featureValue.trim().toLowerCase();
-    if (!/^[a-z0-9_-]+$/.test(feature)) {
+    const allowedFeatures = new Set(["welcome", "goodbye", "autorole", "logs", "rules"]);
+    if (!allowedFeatures.has(feature)) {
       const embed = buildEmbed(context, {
         title: "Invalid Feature",
-        description: "Feature names must use only letters, numbers, underscores, or dashes.",
+        description: "Please choose a feature from the available options.",
         variant: "warning"
       });
       await interaction.reply({ embeds: [embed], ephemeral: true });
