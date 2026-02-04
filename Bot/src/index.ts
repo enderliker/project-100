@@ -2,7 +2,7 @@ import http from "http";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { Client, GatewayIntentBits, REST } from "discord.js";
+import { Client, GatewayIntentBits, Options, REST } from "discord.js";
 import {
   createJob,
   createPostgresPool,
@@ -570,7 +570,36 @@ async function main(): Promise<void> {
     healthLogger.info(`event=health_listen host=${healthHost} port=${healthPort}`);
   });
 
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  const client = new Client({
+    intents: [GatewayIntentBits.Guilds],
+    makeCache: Options.cacheWithLimits({
+      MessageManager: 0,
+      PresenceManager: 0,
+      GuildMemberManager: 0,
+      ReactionManager: 0,
+      VoiceStateManager: 0,
+      GuildEmojiManager: 0,
+      GuildStickerManager: 0,
+      GuildScheduledEventManager: 0,
+      ThreadManager: 0,
+      StageInstanceManager: 0,
+      GuildBanManager: 0
+    }),
+    sweepers: {
+      messages: {
+        interval: 300,
+        lifetime: 300
+      },
+      users: {
+        interval: 300,
+        filter: () => () => true
+      },
+      guildMembers: {
+        interval: 300,
+        filter: () => () => true
+      }
+    }
+  });
   const readyPromise = new Promise<void>((resolve, reject) => {
     client.once("ready", () => {
       discordLogger.info("event=discord_ready");
