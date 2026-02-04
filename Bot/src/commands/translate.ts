@@ -3,6 +3,7 @@ import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
 import { getGuildSettings } from "./guild-settings-store";
 import { translateText } from "./translation";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -35,7 +36,7 @@ export const command: CommandDefinition = {
           description: "Translation is disabled for this server.",
           variant: "warning"
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
       if (!target) {
@@ -46,7 +47,7 @@ export const command: CommandDefinition = {
       target = "en";
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await safeDefer(interaction, { ephemeral: true });
 
     try {
       const result = await translateText({ text, source, target });
@@ -58,7 +59,7 @@ export const command: CommandDefinition = {
         { name: "Target", value: target, inline: true },
         { name: "Detected", value: result.detectedSource ?? "auto", inline: true }
       );
-      await interaction.editReply({ embeds: [embed] });
+      await safeEditOrFollowUp(interaction, { embeds: [embed] });
     } catch (error) {
       const embed = buildEmbed(context, {
         title: "Translation Unavailable",
@@ -66,7 +67,7 @@ export const command: CommandDefinition = {
           "The translation service is currently unavailable. Please try again later or configure a custom provider.",
         variant: "warning"
       });
-      await interaction.editReply({ embeds: [embed] });
+      await safeEditOrFollowUp(interaction, { embeds: [embed] });
     }
   }
 };

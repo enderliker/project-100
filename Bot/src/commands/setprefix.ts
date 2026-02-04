@@ -7,6 +7,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig, setGuildPrefix } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -25,7 +26,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -36,7 +37,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to update server configuration.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const prefixValue = interaction.options.getString("prefix", true);
@@ -46,15 +47,16 @@ export const command: CommandDefinition = {
         description: "Please specify a valid prefix.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const prefix = prefixValue.trim();
+    await safeDefer(interaction, { ephemeral: true });
     await setGuildPrefix(pool, guildContext.guild.id, prefix);
     const embed = buildEmbed(context, {
       title: "Prefix Updated",
       description: `Prefix set to \`${prefix}\`.`
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

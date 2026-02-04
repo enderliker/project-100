@@ -11,6 +11,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -27,7 +28,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -38,7 +39,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to unban members.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -68,10 +69,11 @@ export const command: CommandDefinition = {
         description: "Please provide a valid user ID to unban.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
+    await safeDefer(interaction);
     try {
       await guildContext.guild.bans.remove(userId, reason);
     } catch (error) {
@@ -93,6 +95,6 @@ export const command: CommandDefinition = {
       title: "User Unbanned",
       description: `Unbanned user ID ${userId}.`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeEditOrFollowUp(interaction, { embeds: [embed] });
   }
 };

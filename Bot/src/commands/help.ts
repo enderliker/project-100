@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const HELP_TEXT = [
   "**Moderation / Administration**",
@@ -26,6 +27,6 @@ export const command: CommandDefinition = {
       title: "Help",
       description: HELP_TEXT
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeRespond(interaction, { embeds: [embed], ephemeral: true });
   }
 };

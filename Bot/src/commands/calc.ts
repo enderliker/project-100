@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 type Operator = "+" | "-" | "*" | "/" | "%" | "^";
 
@@ -163,7 +164,7 @@ export const command: CommandDefinition = {
         description: "Please provide an expression to evaluate.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     try {
@@ -172,14 +173,14 @@ export const command: CommandDefinition = {
         title: "Calculator",
         description: `${expression} = **${result}**`
       });
-      await interaction.reply({ embeds: [embed] });
+      await safeRespond(interaction, { embeds: [embed] });
     } catch (error) {
       const embed = buildEmbed(context, {
         title: "Calculator",
         description: "Invalid expression.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
     }
   }
 };

@@ -13,6 +13,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const MAX_CLEAR = 100;
 
@@ -46,7 +47,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -57,7 +58,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to clear messages.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -87,7 +88,7 @@ export const command: CommandDefinition = {
         description: "This command can only be used in text channels.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasChannelPermissions = await requireChannelPermissions(
@@ -108,9 +109,10 @@ export const command: CommandDefinition = {
         description: "Please specify a valid number of messages to delete.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction, { ephemeral: true });
     let deleted: Map<string, Message>;
     try {
       deleted = await channel.bulkDelete(amount, true);
@@ -134,6 +136,6 @@ export const command: CommandDefinition = {
       title: "Messages Cleared",
       description: `Deleted ${deletedCount} messages.`
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed, requireGuildContext, requirePostgres, trimEmbedDescription } from "./command-utils";
 import { getGuildSettings } from "./guild-settings-store";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -12,7 +13,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -23,7 +24,7 @@ export const command: CommandDefinition = {
         description: "Rules are currently disabled for this server.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const entries = settings.rules.entries;
@@ -33,7 +34,7 @@ export const command: CommandDefinition = {
         description: "Rules have not been configured for this server.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const description = trimEmbedDescription(
@@ -43,6 +44,6 @@ export const command: CommandDefinition = {
       title: "Rules",
       description
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

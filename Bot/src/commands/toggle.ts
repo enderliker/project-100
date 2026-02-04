@@ -8,6 +8,7 @@ import {
 } from "./command-utils";
 import { getGuildConfig, setGuildToggle } from "./storage";
 import { clearGuildSettingsCache, updateGuildSettings } from "./guild-settings-store";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -36,7 +37,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -47,7 +48,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to update server configuration.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const featureValue = interaction.options.getString("feature", true);
@@ -57,7 +58,7 @@ export const command: CommandDefinition = {
         description: "Please provide a valid feature name to toggle.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const feature = featureValue.trim().toLowerCase();
@@ -68,7 +69,7 @@ export const command: CommandDefinition = {
         description: "Please choose a feature from the available options.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const enabled = interaction.options.getBoolean("enabled", true);
@@ -78,9 +79,10 @@ export const command: CommandDefinition = {
         description: "Please specify whether the feature should be enabled or disabled.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction, { ephemeral: true });
     await setGuildToggle(pool, guildContext.guild.id, feature, enabled);
     await updateGuildSettings(pool, guildContext.guild.id, {
       features: {
@@ -97,6 +99,6 @@ export const command: CommandDefinition = {
       title: "Toggle Updated",
       description: `Feature \`${feature}\` is now ${enabled ? "enabled" : "disabled"}.`
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

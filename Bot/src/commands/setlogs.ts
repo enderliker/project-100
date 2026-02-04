@@ -9,6 +9,7 @@ import {
 } from "./command-utils";
 import { getGuildConfig, setGuildLogsChannel } from "./storage";
 import { clearGuildSettingsCache, updateGuildSettings } from "./guild-settings-store";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -25,7 +26,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -36,7 +37,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to update server configuration.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const channel = interaction.options.getChannel("channel", true);
@@ -46,9 +47,10 @@ export const command: CommandDefinition = {
         description: "Please specify a valid channel for moderation logs.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction, { ephemeral: true });
     await setGuildLogsChannel(pool, guildContext.guild.id, channel.id);
     await updateGuildSettings(pool, guildContext.guild.id, {
       loggingChannelId: channel.id
@@ -58,6 +60,6 @@ export const command: CommandDefinition = {
       title: "Logs Channel Updated",
       description: `Logs channel set to ${formatChannelLabel(channel)}.`
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

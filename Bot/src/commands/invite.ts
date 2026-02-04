@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 function getInviteUrl(): string | null {
   const appId = process.env.DISCORD_APP_ID;
@@ -20,13 +21,13 @@ export const command: CommandDefinition = {
         description: "Invite link is not configured.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const embed = buildEmbed(context, {
       title: "Invite",
       description: inviteUrl
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeRespond(interaction, { embeds: [embed], ephemeral: true });
   }
 };

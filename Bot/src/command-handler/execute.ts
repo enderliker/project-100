@@ -9,6 +9,12 @@ import { createContext } from "./Context";
 import { runMiddleware } from "./middleware";
 import { getCommand } from "./registry";
 import { getErrorInfo } from "../discord-error-utils";
+import {
+  safeDefer,
+  safeEditOrFollowUp,
+  safeRespond,
+  shouldDeferByDeadline
+} from "./interaction-response";
 
 const handlerLogger = createLogger("discord");
 const logCommandEvents = process.env.LOG_COMMAND_EVENTS === "1";
@@ -103,13 +109,14 @@ function createMappedErrorResponse(
 
 async function handleMiddlewareFailure(
   interaction: ChatInputCommandInteraction,
-  message: string
+  message: string,
+  correlationId: string
 ): Promise<void> {
-  if (interaction.replied || interaction.deferred) {
-    await interaction.followUp({ content: message, ephemeral: true });
-    return;
-  }
-  await interaction.reply({ content: message, ephemeral: true });
+  await safeRespond(
+    interaction,
+    { content: message, ephemeral: true },
+    { logger: handlerLogger, correlationId }
+  );
 }
 
 async function executeCommand(
@@ -131,9 +138,17 @@ async function executeCommand(
     );
   }
 
+  if (shouldDeferByDeadline(interaction)) {
+    await safeDefer(interaction, undefined, { logger: handlerLogger, correlationId });
+  }
+
   const middlewareResult = await runMiddleware(command, context);
   if (!middlewareResult.ok) {
-    await handleMiddlewareFailure(interaction, middlewareResult.message ?? "Command blocked.");
+    await handleMiddlewareFailure(
+      interaction,
+      middlewareResult.message ?? "Command blocked.",
+      correlationId
+    );
     return;
   }
 
@@ -153,11 +168,11 @@ async function executeCommand(
 
     const version = legacyContext.getVersion();
     const embed = createMappedErrorResponse(correlationId, version, error);
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ embeds: [embed], ephemeral: true });
-      return;
-    }
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(
+      interaction,
+      { embeds: [embed], ephemeral: true },
+      { logger: handlerLogger, correlationId }
+    );
   }
 }
 

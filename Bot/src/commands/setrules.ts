@@ -12,11 +12,8 @@ import {
 } from "./command-utils";
 import type { CommandExecutionContext } from "./types";
 import { getGuildConfig } from "./storage";
-import {
-  clearGuildSettingsCache,
-  getGuildSettings,
-  updateGuildSettings
-} from "./guild-settings-store";
+import { clearGuildSettingsCache, getGuildSettings, updateGuildSettings } from "./guild-settings-store";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const MAX_RULES = 25;
 const MAX_RULE_LENGTH = 500;
@@ -36,7 +33,7 @@ async function requireAdmin(
   if (!guildContext) {
     return false;
   }
-  const pool = requirePostgres(context, (options) => interaction.reply(options));
+  const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
   if (!pool) {
     return false;
   }
@@ -47,7 +44,7 @@ async function requireAdmin(
       description: "You do not have permission to update server rules.",
       variant: "error"
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeRespond(interaction, { embeds: [embed], ephemeral: true });
     return false;
   }
   return true;
@@ -61,7 +58,7 @@ async function getSettingsForInteraction(
   if (!guildContext) {
     return null;
   }
-  const pool = requirePostgres(context, (options) => interaction.reply(options));
+  const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
   if (!pool) {
     return null;
   }
@@ -183,6 +180,8 @@ export const command: CommandDefinition = {
       return;
     }
 
+    await safeDefer(interaction, { ephemeral: true });
+
     const { pool, guildId, settings, guild } = settingsData;
     const subcommand = interaction.options.getSubcommand(true);
 
@@ -206,7 +205,7 @@ export const command: CommandDefinition = {
           inline: true
         }
       );
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -220,7 +219,7 @@ export const command: CommandDefinition = {
           description: `You can only store up to ${MAX_RULES} rules.`,
           variant: "warning"
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
       if (position && position >= 1 && position <= nextEntries.length + 1) {
@@ -241,7 +240,7 @@ export const command: CommandDefinition = {
         title: "Rule Added",
         description: trimEmbedDescription(formatRules(nextEntries))
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -255,7 +254,7 @@ export const command: CommandDefinition = {
           description: "Choose a valid rule number to update.",
           variant: "warning"
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
       nextEntries[index - 1] = text;
@@ -269,7 +268,7 @@ export const command: CommandDefinition = {
         title: "Rule Updated",
         description: trimEmbedDescription(formatRules(nextEntries))
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -282,7 +281,7 @@ export const command: CommandDefinition = {
           description: "Choose a valid rule number to remove.",
           variant: "warning"
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
       nextEntries.splice(index - 1, 1);
@@ -296,7 +295,7 @@ export const command: CommandDefinition = {
         title: "Rule Removed",
         description: trimEmbedDescription(formatRules(nextEntries))
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -308,7 +307,7 @@ export const command: CommandDefinition = {
           description: "Please confirm to clear all rules.",
           variant: "warning"
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
       await updateGuildSettings(pool, guildId, {
@@ -321,7 +320,7 @@ export const command: CommandDefinition = {
         title: "Rules Cleared",
         description: "All rules have been removed."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -337,7 +336,7 @@ export const command: CommandDefinition = {
         title: "Rules Title Updated",
         description: `Rules title set to **${title}**.`
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -354,7 +353,7 @@ export const command: CommandDefinition = {
           description: "Please provide a valid text channel to publish the rules.",
           variant: "warning"
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
 
@@ -412,7 +411,7 @@ export const command: CommandDefinition = {
           description: "Add at least one rule before publishing.",
           variant: "warning"
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
 
@@ -447,7 +446,7 @@ export const command: CommandDefinition = {
         title: "Rules Published",
         description: `Rules published in <#${channel.id}>.`
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
     }
   }
 };

@@ -7,6 +7,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig, setGuildWelcomeTemplate } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -25,7 +26,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -36,15 +37,16 @@ export const command: CommandDefinition = {
         description: "You do not have permission to update server configuration.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const template = interaction.options.getString("template", true);
+    await safeDefer(interaction, { ephemeral: true });
     await setGuildWelcomeTemplate(pool, guildContext.guild.id, template);
     const embed = buildEmbed(context, {
       title: "Welcome Template Updated",
       description: "Welcome template saved."
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

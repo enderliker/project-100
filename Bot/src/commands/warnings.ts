@@ -11,6 +11,7 @@ import {
   trimEmbedDescription
 } from "./command-utils";
 import { getGuildConfig, listWarnings } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -24,7 +25,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -35,7 +36,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to view warnings.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -55,9 +56,10 @@ export const command: CommandDefinition = {
         description: "Please specify a valid user to view warnings.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction);
     try {
       const warnings = await listWarnings(pool, guildContext.guild.id, target.id);
       if (warnings.length === 0) {
@@ -65,7 +67,7 @@ export const command: CommandDefinition = {
           title: "Warnings",
           description: `${formatUserLabel(target)} has no warnings.`
         });
-        await interaction.reply({ embeds: [embed] });
+        await safeEditOrFollowUp(interaction, { embeds: [embed] });
         return;
       }
       const lines = warnings.map(
@@ -76,7 +78,7 @@ export const command: CommandDefinition = {
         title: "Warnings",
         description: trimEmbedDescription(lines.join("\n"))
       });
-      await interaction.reply({ embeds: [embed] });
+      await safeEditOrFollowUp(interaction, { embeds: [embed] });
     } catch (error) {
       await handleCommandError(interaction, context, error, {
         title: "Warnings Failed",

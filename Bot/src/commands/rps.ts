@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const CHOICES = ["rock", "paper", "scissors"] as const;
 
@@ -41,7 +42,7 @@ export const command: CommandDefinition = {
         description: "Please choose rock, paper, or scissors.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     if (!CHOICES.includes(playerChoice as (typeof CHOICES)[number])) {
@@ -50,7 +51,7 @@ export const command: CommandDefinition = {
         description: "Invalid choice.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const botChoice = CHOICES[Math.floor(Math.random() * CHOICES.length)];
@@ -59,6 +60,6 @@ export const command: CommandDefinition = {
       title: "Rock Paper Scissors",
       description: `You chose **${playerChoice}**. I chose **${botChoice}**. ${result}`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

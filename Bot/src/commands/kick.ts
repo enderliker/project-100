@@ -14,6 +14,7 @@ import {
   validateModerationTarget
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -30,7 +31,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -41,7 +42,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to kick members.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -71,7 +72,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid user to kick.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const targetMember = await fetchMemberSafe(guildContext.guild, target.id);
@@ -81,7 +82,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid member to kick.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const allowed = await validateModerationTarget({
@@ -98,6 +99,7 @@ export const command: CommandDefinition = {
       return;
     }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
+    await safeDefer(interaction);
     try {
       await targetMember.kick(reason);
     } catch (error) {
@@ -119,6 +121,6 @@ export const command: CommandDefinition = {
       title: "User Kicked",
       description: `Kicked ${formatUserLabel(targetMember.user)}.`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeEditOrFollowUp(interaction, { embeds: [embed] });
   }
 };

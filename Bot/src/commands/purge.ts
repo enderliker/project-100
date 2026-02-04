@@ -14,6 +14,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const MAX_PURGE = 100;
 
@@ -51,7 +52,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -62,7 +63,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to purge messages.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -92,7 +93,7 @@ export const command: CommandDefinition = {
         description: "This command can only be used in text channels.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasChannelPermissions = await requireChannelPermissions(
@@ -113,7 +114,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid user to purge.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const amount = interaction.options.getInteger("amount", true);
@@ -123,9 +124,10 @@ export const command: CommandDefinition = {
         description: "Please specify a valid number of messages to scan.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction, { ephemeral: true });
     let fetched: Map<string, Message>;
     try {
       fetched = await channel.messages.fetch({ limit: amount });
@@ -162,6 +164,6 @@ export const command: CommandDefinition = {
       title: "Messages Purged",
       description: `Deleted ${deletedCount} messages from ${formatUserLabel(target)}.`
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

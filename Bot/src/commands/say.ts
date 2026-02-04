@@ -10,6 +10,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -23,7 +24,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -34,7 +35,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to use /say.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const botMember = await requireBotPermissions(
@@ -54,7 +55,7 @@ export const command: CommandDefinition = {
         description: "Please provide a valid message to send.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const channel = interaction.channel;
@@ -64,7 +65,7 @@ export const command: CommandDefinition = {
         description: "This command can only be used in text channels.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasChannelPermissions = await requireChannelPermissions(
@@ -78,6 +79,7 @@ export const command: CommandDefinition = {
     if (!hasChannelPermissions) {
       return;
     }
+    await safeDefer(interaction, { ephemeral: true });
     try {
       await channel.send({ content: message });
     } catch (error) {
@@ -91,6 +93,6 @@ export const command: CommandDefinition = {
       title: "Message Sent",
       description: "Your message has been sent."
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

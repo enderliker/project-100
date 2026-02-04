@@ -7,10 +7,8 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
-import {
-  clearGuildSettingsCache,
-  updateGuildSettings
-} from "./guild-settings-store";
+import { clearGuildSettingsCache, updateGuildSettings } from "./guild-settings-store";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -29,7 +27,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -40,10 +38,11 @@ export const command: CommandDefinition = {
         description: "You do not have permission to update server configuration.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const language = interaction.options.getString("language", true).trim().toLowerCase();
+    await safeDefer(interaction, { ephemeral: true });
     await updateGuildSettings(pool, guildContext.guild.id, {
       language,
       translation: {
@@ -55,6 +54,6 @@ export const command: CommandDefinition = {
       title: "Language Updated",
       description: `Default language set to **${language}**.`
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

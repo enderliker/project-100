@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -21,7 +22,7 @@ export const command: CommandDefinition = {
         description: "Please provide two valid users to ship.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const score = Math.floor(Math.random() * 101);
@@ -29,6 +30,6 @@ export const command: CommandDefinition = {
       title: "Ship",
       description: `${user1.username} ❤️ ${user2.username}\nCompatibility: ${score}%`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

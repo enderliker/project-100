@@ -13,6 +13,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const MAX_SLOWMODE = 21600;
 
@@ -43,7 +44,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -54,7 +55,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to manage slowmode.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -84,7 +85,7 @@ export const command: CommandDefinition = {
         description: "This command can only be used in text channels.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasChannelPermissions = await requireChannelPermissions(
@@ -105,9 +106,10 @@ export const command: CommandDefinition = {
         description: "Please specify a valid slowmode duration.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction);
     try {
       await channel.setRateLimitPerUser(seconds, "Slowmode update");
     } catch (error) {
@@ -129,6 +131,6 @@ export const command: CommandDefinition = {
       title: "Slowmode Updated",
       description: seconds === 0 ? "Slowmode disabled." : `Slowmode set to ${seconds}s.`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeEditOrFollowUp(interaction, { embeds: [embed] });
   }
 };

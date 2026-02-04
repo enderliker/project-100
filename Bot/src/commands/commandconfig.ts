@@ -15,6 +15,7 @@ import {
   updateGuildSettings
 } from "./guild-settings-store";
 import type { CommandOverride } from "./guild-settings";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const MAX_COOLDOWN_SECONDS = 3600;
 
@@ -193,7 +194,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -204,7 +205,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to update command settings.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -217,9 +218,11 @@ export const command: CommandDefinition = {
         description: `No command named \`${commandName}\` was found.`,
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+
+    await safeDefer(interaction, { ephemeral: true });
 
     const settings = await getGuildSettings(pool, guildContext.guild.id);
     const currentOverride: CommandOverride = settings.commands[commandName] ?? {};
@@ -230,7 +233,7 @@ export const command: CommandDefinition = {
         title: "Command Overrides",
         description: trimEmbedDescription(summarizeOverride(commandName, currentOverride))
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -247,7 +250,7 @@ export const command: CommandDefinition = {
         title: "Command Updated",
         description: `Command \`${commandName}\` is now ${enabled ? "enabled" : "disabled"}.`
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -270,7 +273,7 @@ export const command: CommandDefinition = {
             ? `Cooldown cleared for \`${commandName}\`.`
             : `Cooldown set to ${seconds}s for \`${commandName}\`.`
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -290,7 +293,7 @@ export const command: CommandDefinition = {
         title: "Command Role Updated",
         description: `${role} ${subcommand === "allow-role" ? "allowed" : "denied"} for \`${commandName}\`.`
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -310,7 +313,7 @@ export const command: CommandDefinition = {
         title: "Command User Updated",
         description: `${user} ${subcommand === "allow-user" ? "allowed" : "denied"} for \`${commandName}\`.`
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -328,7 +331,7 @@ export const command: CommandDefinition = {
           title: "Command Overrides Cleared",
           description: `All overrides removed for \`${commandName}\`.`
         });
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
         return;
       }
       if (scope === "cooldown") {
@@ -356,7 +359,7 @@ export const command: CommandDefinition = {
         title: "Command Overrides Updated",
         description: `Overrides updated for \`${commandName}\`.`
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
     }
   }
 };
