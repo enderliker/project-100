@@ -15,6 +15,7 @@ import {
   validateModerationTarget
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -31,7 +32,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -42,7 +43,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to ban members.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -72,7 +73,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid user to ban.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     if (target.id === interaction.user.id) {
@@ -81,7 +82,7 @@ export const command: CommandDefinition = {
         description: "You cannot ban yourself.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     if (context.client.user && target.id === context.client.user.id) {
@@ -90,7 +91,7 @@ export const command: CommandDefinition = {
         description: "You cannot ban the bot.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     if (target.id === guildContext.guild.ownerId) {
@@ -99,7 +100,7 @@ export const command: CommandDefinition = {
         description: "You cannot ban the server owner.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     if (target.bot && !hasAdministratorPermission(guildContext.member)) {
@@ -108,7 +109,7 @@ export const command: CommandDefinition = {
         description: "You need Administrator to ban bot accounts.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const targetMember = await fetchMemberSafe(guildContext.guild, target.id);
@@ -128,6 +129,7 @@ export const command: CommandDefinition = {
       }
     }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
+    await safeDefer(interaction);
     try {
       await guildContext.guild.members.ban(target, { reason });
     } catch (error) {
@@ -149,6 +151,6 @@ export const command: CommandDefinition = {
       title: "User Banned",
       description: `Banned ${formatUserLabel(target)}.`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeEditOrFollowUp(interaction, { embeds: [embed] });
   }
 };

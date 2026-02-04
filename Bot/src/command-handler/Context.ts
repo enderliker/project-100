@@ -11,6 +11,7 @@ import type {
 } from "discord.js";
 import { createLogger } from "@project/shared";
 import type { CommandExecutionContext } from "../commands/types";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "./interaction-response";
 
 export interface CommandContext {
   client: Client;
@@ -81,25 +82,21 @@ export function createContext({
     if (!isChatInput(interaction)) {
       return;
     }
-    await interaction.reply(options);
+    await safeRespond(interaction, options);
   };
 
   const defer = async (options?: InteractionDeferReplyOptions) => {
     if (!isChatInput(interaction)) {
       return;
     }
-    await interaction.deferReply(options);
+    await safeDefer(interaction, options);
   };
 
   const safeReply = async (options: InteractionReplyOptions | MessagePayload) => {
     if (!isChatInput(interaction)) {
       return;
     }
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(options);
-      return;
-    }
-    await interaction.reply(options);
+    await safeEditOrFollowUp(interaction, options);
   };
 
   const getSubcommand = (options?: { required?: boolean }) => {

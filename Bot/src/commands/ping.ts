@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import { buildBaseEmbed } from "../embeds";
 import type { CommandDefinition } from "./types";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -20,6 +21,6 @@ export const command: CommandDefinition = {
         )}s\``
       }
     );
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

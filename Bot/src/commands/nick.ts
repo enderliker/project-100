@@ -14,6 +14,7 @@ import {
   validateModerationTarget
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -33,7 +34,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -44,7 +45,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to change nicknames.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -74,7 +75,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid user to update.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const targetMember = await fetchMemberSafe(guildContext.guild, target.id);
@@ -84,7 +85,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid member to update.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const allowed = await validateModerationTarget({
@@ -101,6 +102,7 @@ export const command: CommandDefinition = {
       return;
     }
     const nickname = interaction.options.getString("nickname");
+    await safeDefer(interaction);
     try {
       await targetMember.setNickname(nickname ?? null, "Nickname update");
     } catch (error) {
@@ -122,6 +124,6 @@ export const command: CommandDefinition = {
       title: "Nickname Updated",
       description: `Updated nickname for ${formatUserLabel(targetMember.user)}.`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeEditOrFollowUp(interaction, { embeds: [embed] });
   }
 };

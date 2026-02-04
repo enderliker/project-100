@@ -1,4 +1,5 @@
 import type {
+  ChatInputCommandInteraction,
   Channel,
   Guild,
   GuildMember,
@@ -13,6 +14,7 @@ import { getErrorInfo } from "../discord-error-utils";
 import type { CommandExecutionContext } from "./types";
 import { createModlog, getGuildConfig } from "./storage";
 import { getGuildSettings } from "./guild-settings-store";
+import { safeRespond } from "../command-handler/interaction-response";
 
 export function buildEmbed(
   context: CommandExecutionContext,
@@ -23,12 +25,7 @@ export function buildEmbed(
 }
 
 export async function requireGuildContext(
-  interaction: {
-    guild: Guild | null;
-    member: GuildMember | object | null;
-    user: User;
-    reply: Function;
-  },
+  interaction: ChatInputCommandInteraction,
   context: CommandExecutionContext
 ): Promise<{ guild: Guild; member: GuildMember } | null> {
   const inGuild =
@@ -41,7 +38,7 @@ export async function requireGuildContext(
       description: "This command can only be used in a server.",
       variant: "warning"
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeRespond(interaction, { embeds: [embed], ephemeral: true });
     return null;
   }
   const member = await interaction.guild.members
@@ -53,28 +50,17 @@ export async function requireGuildContext(
       description: "Unable to resolve your member record for this server.",
       variant: "warning"
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeRespond(interaction, { embeds: [embed], ephemeral: true });
     return null;
   }
   return { guild: interaction.guild, member };
 }
 
 async function replyEphemeral(
-  interaction: {
-    reply: (options: InteractionReplyOptions) => Promise<void>;
-    followUp?: (options: InteractionReplyOptions) => Promise<void>;
-    replied?: boolean;
-    deferred?: boolean;
-  },
+  interaction: ChatInputCommandInteraction,
   options: InteractionReplyOptions
 ): Promise<void> {
-  if (interaction.replied || interaction.deferred) {
-    if (interaction.followUp) {
-      await interaction.followUp({ ...options, ephemeral: true });
-      return;
-    }
-  }
-  await interaction.reply({ ...options, ephemeral: true });
+  await safeRespond(interaction, { ...options, ephemeral: true });
 }
 
 export async function getMeMemberSafe(
@@ -93,12 +79,7 @@ export async function getMeMemberSafe(
 }
 
 export async function requireBotPermissions(
-  interaction: {
-    reply: (options: InteractionReplyOptions) => Promise<void>;
-    followUp?: (options: InteractionReplyOptions) => Promise<void>;
-    replied?: boolean;
-    deferred?: boolean;
-  },
+  interaction: ChatInputCommandInteraction,
   context: CommandExecutionContext,
   guild: Guild,
   permissions: string[],
@@ -128,12 +109,7 @@ export async function requireBotPermissions(
 }
 
 export async function requireInvokerPermissions(
-  interaction: {
-    reply: (options: InteractionReplyOptions) => Promise<void>;
-    followUp?: (options: InteractionReplyOptions) => Promise<void>;
-    replied?: boolean;
-    deferred?: boolean;
-  },
+  interaction: ChatInputCommandInteraction,
   context: CommandExecutionContext,
   member: GuildMember,
   permissions: string[],
@@ -156,12 +132,7 @@ export async function requireInvokerPermissions(
 type PermissionCheckChannel = unknown;
 
 export async function requireChannelPermissions(
-  interaction: {
-    reply: (options: InteractionReplyOptions) => Promise<void>;
-    followUp?: (options: InteractionReplyOptions) => Promise<void>;
-    replied?: boolean;
-    deferred?: boolean;
-  },
+  interaction: ChatInputCommandInteraction,
   context: CommandExecutionContext,
   channel: PermissionCheckChannel,
   member: GuildMember,
@@ -255,7 +226,7 @@ function compareRolePositions(left: GuildMember, right: GuildMember): number | n
 
 export function requirePostgres(
   context: CommandExecutionContext,
-  reply: (options: InteractionReplyOptions | string) => Promise<void>
+  reply: (options: InteractionReplyOptions | string) => Promise<unknown>
 ): Pool | null {
   if (!context.postgresPool) {
     const embed = buildEmbed(context, {
@@ -372,12 +343,7 @@ export async function fetchMemberSafe(
 }
 
 export async function validateModerationTarget(options: {
-  interaction: {
-    reply: (options: InteractionReplyOptions) => Promise<void>;
-    followUp?: (options: InteractionReplyOptions) => Promise<void>;
-    replied?: boolean;
-    deferred?: boolean;
-  };
+  interaction: ChatInputCommandInteraction;
   context: CommandExecutionContext;
   guild: Guild;
   invoker: GuildMember;
@@ -529,12 +495,7 @@ export function mapDiscordError(error: unknown): {
 }
 
 export async function handleCommandError(
-  interaction: {
-    reply: (options: InteractionReplyOptions) => Promise<void>;
-    followUp?: (options: InteractionReplyOptions) => Promise<void>;
-    replied?: boolean;
-    deferred?: boolean;
-  },
+  interaction: ChatInputCommandInteraction,
   context: CommandExecutionContext,
   error: unknown,
   fallback: { title: string; description: string }

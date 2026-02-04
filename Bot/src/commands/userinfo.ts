@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed, fetchMemberSafe } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -26,6 +27,6 @@ export const command: CommandDefinition = {
     });
     const avatar = user.displayAvatarURL({ size: 512 });
     embed.setThumbnail(avatar);
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

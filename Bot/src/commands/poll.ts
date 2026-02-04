@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -24,7 +25,7 @@ export const command: CommandDefinition = {
         description: "Please provide poll options.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const options = rawOptions
@@ -37,7 +38,7 @@ export const command: CommandDefinition = {
         description: "Please provide at least two options.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const lines = options.map((option, index) => `${index + 1}. ${option}`);
@@ -45,6 +46,6 @@ export const command: CommandDefinition = {
       title: "Poll",
       description: `${question}\n\n${lines.join("\n")}`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

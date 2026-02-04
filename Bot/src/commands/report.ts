@@ -9,6 +9,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { createReport, getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -25,7 +26,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -36,7 +37,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to submit reports.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const target = interaction.options.getUser("user", true);
@@ -46,7 +47,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid user to report.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const reason = interaction.options.getString("reason", true);
@@ -56,9 +57,10 @@ export const command: CommandDefinition = {
         description: "Please provide a reason for the report.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction, { ephemeral: true });
     await createReport(pool, guildContext.guild.id, interaction.user.id, target.id, reason);
     await logModerationAction(
       context,
@@ -72,6 +74,6 @@ export const command: CommandDefinition = {
       title: "Report Submitted",
       description: `Your report for ${formatUserLabel(target)} has been submitted.`
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

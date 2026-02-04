@@ -14,6 +14,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 type OverwriteCapableChannel = TextBasedChannel & {
   permissionOverwrites: {
@@ -42,7 +43,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -53,7 +54,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to lock channels.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -87,7 +88,7 @@ export const command: CommandDefinition = {
         description: "This command can only be used in text channels.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasChannelPermissions = await requireChannelPermissions(
@@ -101,6 +102,7 @@ export const command: CommandDefinition = {
     if (!hasChannelPermissions) {
       return;
     }
+    await safeDefer(interaction);
     try {
       await targetChannel.permissionOverwrites.edit(
         guildContext.guild.roles.everyone,
@@ -126,6 +128,6 @@ export const command: CommandDefinition = {
       title: "Channel Locked",
       description: `Locked ${formatChannelLabel(targetChannel)}.`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeEditOrFollowUp(interaction, { embeds: [embed] });
   }
 };

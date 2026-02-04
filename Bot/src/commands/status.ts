@@ -2,6 +2,7 @@ import { SlashCommandBuilder } from "discord.js";
 import { checkPostgresHealth, checkRedisHealth } from "@project/shared";
 import { buildStatusEmbed, fetchStatusSnapshot } from "../status";
 import type { CommandDefinition } from "./types";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -32,6 +33,6 @@ export const command: CommandDefinition = {
       },
       snapshot
     );
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

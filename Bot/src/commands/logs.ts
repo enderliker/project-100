@@ -7,6 +7,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig, listModlogs } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 25;
@@ -36,7 +37,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -47,9 +48,10 @@ export const command: CommandDefinition = {
         description: "You do not have permission to view moderation logs.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
+    await safeDefer(interaction, { ephemeral: true });
     const limit = interaction.options.getInteger("limit") ?? DEFAULT_LIMIT;
     const entries = await listModlogs(pool, guildContext.guild.id, limit);
     const description =
@@ -65,6 +67,6 @@ export const command: CommandDefinition = {
       title: "Moderation Logs",
       description: trimDescription(description)
     });
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
   }
 };

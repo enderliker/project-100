@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const RESPONSES = [
   "It is certain.",
@@ -38,6 +39,6 @@ export const command: CommandDefinition = {
       title: "8ball",
       description: response
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 interface RedditListing {
   data: {
@@ -30,7 +31,7 @@ export const command: CommandDefinition = {
         description: "Unable to fetch memes right now.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const payload = (await response.json()) as RedditListing;
@@ -51,7 +52,7 @@ export const command: CommandDefinition = {
         description: "No safe image memes were found.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
@@ -60,6 +61,6 @@ export const command: CommandDefinition = {
       description: `https://www.reddit.com${pick.permalink}`
     });
     embed.setImage(pick.url);
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

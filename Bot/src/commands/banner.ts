@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -17,7 +18,7 @@ export const command: CommandDefinition = {
         title: "Banner",
         description: "This user does not have a banner."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const embed = buildEmbed(context, {
@@ -25,6 +26,6 @@ export const command: CommandDefinition = {
       description: `<@${user.id}>`
     });
     embed.setImage(bannerUrl);
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };

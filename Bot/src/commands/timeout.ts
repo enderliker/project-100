@@ -14,6 +14,7 @@ import {
   validateModerationTarget
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 const MAX_TIMEOUT_SECONDS = 60 * 60 * 24 * 28;
 
@@ -40,7 +41,7 @@ export const command: CommandDefinition = {
     if (!guildContext) {
       return;
     }
-    const pool = requirePostgres(context, (options) => interaction.reply(options));
+    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
     if (!pool) {
       return;
     }
@@ -51,7 +52,7 @@ export const command: CommandDefinition = {
         description: "You do not have permission to timeout members.",
         variant: "error"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const hasPermissions = await requireInvokerPermissions(
@@ -81,7 +82,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid user to timeout.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const targetMember = await fetchMemberSafe(guildContext.guild, target.id);
@@ -91,7 +92,7 @@ export const command: CommandDefinition = {
         description: "Please specify a valid member to timeout.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const allowed = await validateModerationTarget({
@@ -114,10 +115,11 @@ export const command: CommandDefinition = {
         description: "Please provide a valid timeout duration.",
         variant: "warning"
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
       return;
     }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
+    await safeDefer(interaction);
     try {
       await targetMember.timeout(durationSeconds * 1000, reason);
     } catch (error) {
@@ -139,6 +141,6 @@ export const command: CommandDefinition = {
       title: "User Timed Out",
       description: `Timed out ${formatUserLabel(targetMember.user)} for ${durationSeconds}s.`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeEditOrFollowUp(interaction, { embeds: [embed] });
   }
 };

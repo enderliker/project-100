@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import { buildEmbed } from "./command-utils";
+import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder().setName("botinfo").setDescription("Shows bot info."),
@@ -11,6 +12,6 @@ export const command: CommandDefinition = {
       title: "Bot Info",
       description: `Version: ${version}\nUptime: ${uptime}s`
     });
-    await interaction.reply({ embeds: [embed] });
+    await safeRespond(interaction, { embeds: [embed] });
   }
 };
