@@ -5,6 +5,7 @@ import {
   formatUserLabel,
   hasModAccess,
   logModerationAction,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -42,6 +43,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["ManageNicknames"],
+      "change nicknames"
+    );
+    if (!botMember) {
+      return;
+    }
     const targetMember = interaction.options.getMember("user", true);
     if (!targetMember) {
       const embed = buildEmbed(context, {
@@ -52,8 +63,27 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    if (targetMember.manageable === false) {
+      const embed = buildEmbed(context, {
+        title: "Cannot Update Nickname",
+        description: "I cannot change this member's nickname due to role hierarchy.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const nickname = interaction.options.getString("nickname");
-    await targetMember.setNickname(nickname ?? null, "Nickname update");
+    try {
+      await targetMember.setNickname(nickname ?? null, "Nickname update");
+    } catch {
+      const embed = buildEmbed(context, {
+        title: "Nickname Update Failed",
+        description: "Unable to update that nickname. Please check my permissions.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     await logModerationAction(
       context,
       guildContext.guild,

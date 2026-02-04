@@ -5,6 +5,7 @@ import {
   buildEmbed,
   hasModAccess,
   logModerationAction,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -56,6 +57,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["ManageMessages"],
+      "clear messages"
+    );
+    if (!botMember) {
+      return;
+    }
     const channel = interaction.channel;
     if (!channel || !channel.isTextBased() || !canBulkDelete(channel)) {
       const embed = buildEmbed(context, {
@@ -76,18 +87,30 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const deleted = await channel.bulkDelete(amount, true);
+    let deleted: Map<string, Message>;
+    try {
+      deleted = await channel.bulkDelete(amount, true);
+    } catch {
+      const embed = buildEmbed(context, {
+        title: "Clear Failed",
+        description: "Unable to delete messages. Please check my permissions.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const deletedCount = deleted.size;
     await logModerationAction(
       context,
       guildContext.guild,
       guildContext.member.id,
       "Clear",
       channel.id,
-      `Deleted ${deleted} messages`
+      `Deleted ${deletedCount} messages`
     );
     const embed = buildEmbed(context, {
       title: "Messages Cleared",
-      description: `Deleted ${deleted} messages.`
+      description: `Deleted ${deletedCount} messages.`
     });
     await interaction.reply({ embeds: [embed], ephemeral: true });
   }
