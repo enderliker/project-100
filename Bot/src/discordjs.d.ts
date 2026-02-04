@@ -72,13 +72,17 @@ declare module "discord.js" {
     name: string;
   }
 
+  export interface Collection<K, V> extends Map<K, V> {
+    map<T>(callback: (value: V, key: K, collection: this) => T): T[];
+  }
+
   export interface RoleManager {
     everyone: Role;
-    cache: Map<string, Role>;
+    cache: Collection<string, Role>;
   }
 
   export interface GuildMemberRoleManager {
-    cache: Map<string, Role>;
+    cache: Collection<string, Role>;
   }
 
   export interface GuildMemberManager {
@@ -100,7 +104,8 @@ declare module "discord.js" {
   }
 
   export interface TextBasedChannel extends Channel {
-    send(options: InteractionReplyOptions | MessagePayload): Promise<void>;
+    guild?: Guild;
+    send(options: InteractionReplyOptions | MessagePayload): Promise<Message>;
   }
 
   export interface GuildChannelManager {
@@ -112,6 +117,7 @@ declare module "discord.js" {
     author: User;
     content: string;
     createdTimestamp: number;
+    pin(): Promise<void>;
   }
 
   export interface MessageManager {
@@ -134,15 +140,29 @@ declare module "discord.js" {
   }
 
   export interface CommandInteractionOptionResolver {
+    getSubcommand(): string | null;
+    getSubcommand(required: true): string;
+    getSubcommand(options: { required?: boolean }): string | null;
     getSubcommand(options?: { required?: boolean }): string | null;
+    getSubcommandGroup(): string | null;
+    getSubcommandGroup(required: true): string;
+    getSubcommandGroup(options: { required?: boolean }): string | null;
     getSubcommandGroup(options?: { required?: boolean }): string | null;
+    getUser(name: string, required: true): User;
     getUser(name: string, required?: boolean): User | null;
+    getMember(name: string, required: true): GuildMember;
     getMember(name: string, required?: boolean): GuildMember | null;
+    getString(name: string, required: true): string;
     getString(name: string, required?: boolean): string | null;
+    getInteger(name: string, required: true): number;
     getInteger(name: string, required?: boolean): number | null;
+    getNumber(name: string, required: true): number;
     getNumber(name: string, required?: boolean): number | null;
+    getBoolean(name: string, required: true): boolean;
     getBoolean(name: string, required?: boolean): boolean | null;
+    getChannel(name: string, required: true): Channel;
     getChannel(name: string, required?: boolean): Channel | null;
+    getRole(name: string, required: true): Role;
     getRole(name: string, required?: boolean): Role | null;
   }
 
@@ -165,6 +185,7 @@ declare module "discord.js" {
     reply(message: string | InteractionReplyOptions): Promise<void>;
     followUp(message: string | InteractionReplyOptions): Promise<void>;
     deferReply(options?: InteractionDeferReplyOptions): Promise<void>;
+    editReply(message: string | InteractionReplyOptions): Promise<void>;
   }
 
   export interface AutocompleteInteraction extends Interaction {
@@ -243,6 +264,9 @@ declare module "discord.js" {
     addRoleOption(
       callback: (option: SlashCommandRoleOption) => SlashCommandRoleOption
     ): this;
+    addSubcommand(
+      callback: (subcommand: SlashCommandSubcommandBuilder) => SlashCommandSubcommandBuilder
+    ): this;
     toJSON(): unknown;
   }
 
@@ -269,4 +293,30 @@ declare module "discord.js" {
   export interface SlashCommandBooleanOption extends BaseSlashCommandOption {}
   export interface SlashCommandChannelOption extends BaseSlashCommandOption {}
   export interface SlashCommandRoleOption extends BaseSlashCommandOption {}
+
+  export interface SlashCommandSubcommandBuilder {
+    setName(name: string): this;
+    setDescription(description: string): this;
+    addUserOption(
+      callback: (option: SlashCommandUserOption) => SlashCommandUserOption
+    ): this;
+    addStringOption(
+      callback: (option: SlashCommandStringOption) => SlashCommandStringOption
+    ): this;
+    addIntegerOption(
+      callback: (option: SlashCommandIntegerOption) => SlashCommandIntegerOption
+    ): this;
+    addNumberOption(
+      callback: (option: SlashCommandNumberOption) => SlashCommandNumberOption
+    ): this;
+    addBooleanOption(
+      callback: (option: SlashCommandBooleanOption) => SlashCommandBooleanOption
+    ): this;
+    addChannelOption(
+      callback: (option: SlashCommandChannelOption) => SlashCommandChannelOption
+    ): this;
+    addRoleOption(
+      callback: (option: SlashCommandRoleOption) => SlashCommandRoleOption
+    ): this;
+  }
 }

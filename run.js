@@ -99,6 +99,11 @@ const installDependencies = async () => {
   await spawnCommand("npm", args, { cwd: ROOT_DIR });
 };
 
+const pullLatestChanges = async () => {
+  log("Pulling latest git changes...");
+  await spawnCommand("git", ["pull"], { cwd: ROOT_DIR });
+};
+
 const listCommandSourceFiles = () => {
   const commandsDir = path.join(ROOT_DIR, "Bot", "src", "commands");
   if (!fs.existsSync(commandsDir)) {
@@ -224,6 +229,7 @@ const main = async () => {
   const serviceMode = validateServiceMode();
   await runHealthcheck();
   await installDependencies();
+  await pullLatestChanges();
   await runBuildIfNeeded();
   validateBuildOutputs();
   await runService(serviceMode);
