@@ -18,6 +18,15 @@ export const command: CommandDefinition = {
   execute: async (interaction, context) => {
     const question = interaction.options.getString("question", true);
     const rawOptions = interaction.options.getString("options", true);
+    if (!rawOptions) {
+      const embed = buildEmbed(context, {
+        title: "Poll",
+        description: "Please provide poll options.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const options = rawOptions
       .split(",")
       .map((entry) => entry.trim())

@@ -1,4 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
+import type { Message, TextBasedChannel } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
@@ -11,6 +12,20 @@ import {
 import { getGuildConfig } from "./storage";
 
 const MAX_PURGE = 100;
+
+type PurgeChannel = {
+  messages: {
+    fetch: (options: { limit: number }) => Promise<Map<string, Message>>;
+  };
+  bulkDelete: (
+    messages: Map<string, Message> | Message[],
+    filterOld?: boolean
+  ) => Promise<Map<string, Message>>;
+};
+
+function canPurge(channel: TextBasedChannel): channel is TextBasedChannel & PurgeChannel {
+  return "messages" in channel && "bulkDelete" in channel;
+}
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -47,7 +62,7 @@ export const command: CommandDefinition = {
       return;
     }
     const channel = interaction.channel;
-    if (!channel || !channel.isTextBased()) {
+    if (!channel || !channel.isTextBased() || !canPurge(channel)) {
       const embed = buildEmbed(context, {
         title: "Unsupported Channel",
         description: "This command can only be used in text channels.",
@@ -57,12 +72,30 @@ export const command: CommandDefinition = {
       return;
     }
     const target = interaction.options.getUser("user", true);
+    if (!target) {
+      const embed = buildEmbed(context, {
+        title: "User Not Found",
+        description: "Please specify a valid user to purge.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const amount = interaction.options.getInteger("amount", true);
-    const fetched = await (channel as any).messages.fetch({ limit: amount });
+    if (amount === null) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Amount",
+        description: "Please specify a valid number of messages to scan.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const fetched = await channel.messages.fetch({ limit: amount });
     const messages = Array.from(fetched.values()).filter(
       (message) => message.author.id === target.id
     );
-    const deleted = await (channel as any).bulkDelete(messages, true);
+    const deleted = await channel.bulkDelete(messages, true);
     await logModerationAction(
       context,
       guildContext.guild,

@@ -50,7 +50,25 @@ export const command: CommandDefinition = {
       return;
     }
     const targetMember = interaction.options.getMember("user", true);
+    if (!targetMember) {
+      const embed = buildEmbed(context, {
+        title: "Member Not Found",
+        description: "Please specify a valid member to timeout.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const durationSeconds = interaction.options.getInteger("duration", true);
+    if (durationSeconds === null) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Duration",
+        description: "Please provide a valid timeout duration.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
     await targetMember.timeout(durationSeconds * 1000, reason);
     await logModerationAction(

@@ -42,6 +42,47 @@ export interface ReportEntry {
   createdAt: Date;
 }
 
+interface GuildConfigRow {
+  guild_id: string;
+  prefix: string | null;
+  logs_channel_id: string | null;
+  welcome_template: string | null;
+  goodbye_template: string | null;
+  autorole_id: string | null;
+  modrole_id: string | null;
+  adminrole_id: string | null;
+  toggles: Record<string, boolean> | null;
+  rules_text: string | null;
+}
+
+interface WarningRow {
+  id: number;
+  guild_id: string;
+  user_id: string;
+  moderator_id: string;
+  reason: string;
+  created_at: string;
+}
+
+interface ModlogRow {
+  id: number;
+  guild_id: string;
+  action: string;
+  target: string;
+  reason: string;
+  moderator_id: string;
+  created_at: string;
+}
+
+interface ReportRow {
+  id: number;
+  guild_id: string;
+  reporter_id: string;
+  target_id: string;
+  reason: string;
+  created_at: string;
+}
+
 const logger = createLogger("discord");
 
 const tableInit = new Map<string, Promise<void>>();
@@ -143,18 +184,7 @@ export async function getGuildConfig(
   if (result.rows.length === 0) {
     return null;
   }
-  const row = result.rows[0] as {
-    guild_id: string;
-    prefix: string | null;
-    logs_channel_id: string | null;
-    welcome_template: string | null;
-    goodbye_template: string | null;
-    autorole_id: string | null;
-    modrole_id: string | null;
-    adminrole_id: string | null;
-    toggles: Record<string, boolean> | null;
-    rules_text: string | null;
-  };
+  const row = result.rows[0] as GuildConfigRow;
   return {
     guildId: row.guild_id,
     prefix: row.prefix,
@@ -318,13 +348,13 @@ export async function listWarnings(
     "SELECT * FROM warnings WHERE guild_id = $1 AND user_id = $2 ORDER BY created_at DESC",
     [guildId, userId]
   );
-  return result.rows.map((row) => ({
-    id: row.id as number,
-    guildId: row.guild_id as string,
-    userId: row.user_id as string,
-    moderatorId: row.moderator_id as string,
-    reason: row.reason as string,
-    createdAt: new Date(row.created_at as string)
+  return (result.rows as WarningRow[]).map((row) => ({
+    id: row.id,
+    guildId: row.guild_id,
+    userId: row.user_id,
+    moderatorId: row.moderator_id,
+    reason: row.reason,
+    createdAt: new Date(row.created_at)
   }));
 }
 
@@ -353,14 +383,14 @@ export async function listModlogs(
     "SELECT * FROM modlogs WHERE guild_id = $1 ORDER BY created_at DESC LIMIT $2",
     [guildId, limit]
   );
-  return result.rows.map((row) => ({
-    id: row.id as number,
-    guildId: row.guild_id as string,
-    action: row.action as string,
-    target: row.target as string,
-    reason: row.reason as string,
-    moderatorId: row.moderator_id as string,
-    createdAt: new Date(row.created_at as string)
+  return (result.rows as ModlogRow[]).map((row) => ({
+    id: row.id,
+    guildId: row.guild_id,
+    action: row.action,
+    target: row.target,
+    reason: row.reason,
+    moderatorId: row.moderator_id,
+    createdAt: new Date(row.created_at)
   }));
 }
 

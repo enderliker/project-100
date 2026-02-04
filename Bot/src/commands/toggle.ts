@@ -42,8 +42,27 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const feature = interaction.options.getString("feature", true).toLowerCase();
+    const featureValue = interaction.options.getString("feature", true);
+    if (!featureValue) {
+      const embed = buildEmbed(context, {
+        title: "Missing Feature",
+        description: "Please provide a valid feature name to toggle.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const enabled = interaction.options.getBoolean("enabled", true);
+    if (enabled === null) {
+      const embed = buildEmbed(context, {
+        title: "Missing Toggle Value",
+        description: "Please specify whether the feature should be enabled or disabled.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const feature = featureValue.toLowerCase();
     await setGuildToggle(pool, guildContext.guild.id, feature, enabled);
     await context.redis.del(`counter:${guildContext.guild.id}:${feature}`);
     const embed = buildEmbed(context, {

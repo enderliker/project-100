@@ -40,6 +40,15 @@ export const command: CommandDefinition = {
       return;
     }
     const targetMember = interaction.options.getMember("user", true);
+    if (!targetMember) {
+      const embed = buildEmbed(context, {
+        title: "Member Not Found",
+        description: "Please specify a valid member to kick.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
     await targetMember.kick(reason);
     await logModerationAction(

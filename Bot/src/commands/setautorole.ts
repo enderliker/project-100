@@ -35,6 +35,15 @@ export const command: CommandDefinition = {
       return;
     }
     const role = interaction.options.getRole("role", true);
+    if (!role) {
+      const embed = buildEmbed(context, {
+        title: "Role Not Found",
+        description: "Please specify a valid role to set as the autorole.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     await setGuildAutorole(pool, guildContext.guild.id, role.id);
     const embed = buildEmbed(context, {
       title: "Autorole Updated",

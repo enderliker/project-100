@@ -1,4 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
+import type { Message, TextBasedChannel } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
@@ -10,6 +11,19 @@ import {
 import { getGuildConfig } from "./storage";
 
 const MAX_CLEAR = 100;
+
+type BulkDeleteChannel = {
+  bulkDelete: (
+    messages: number | Map<string, Message> | Message[],
+    filterOld?: boolean
+  ) => Promise<Map<string, Message>>;
+};
+
+function canBulkDelete(
+  channel: TextBasedChannel
+): channel is TextBasedChannel & BulkDeleteChannel {
+  return "bulkDelete" in channel;
+}
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -43,7 +57,7 @@ export const command: CommandDefinition = {
       return;
     }
     const channel = interaction.channel;
-    if (!channel || !channel.isTextBased()) {
+    if (!channel || !channel.isTextBased() || !canBulkDelete(channel)) {
       const embed = buildEmbed(context, {
         title: "Unsupported Channel",
         description: "This command can only be used in text channels.",
@@ -53,7 +67,16 @@ export const command: CommandDefinition = {
       return;
     }
     const amount = interaction.options.getInteger("amount", true);
-    const deleted = await (channel as any).bulkDelete(amount, true);
+    if (amount === null) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Amount",
+        description: "Please specify a valid number of messages to delete.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const deleted = await channel.bulkDelete(amount, true);
     await logModerationAction(
       context,
       guildContext.guild,

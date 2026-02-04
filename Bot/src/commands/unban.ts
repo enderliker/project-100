@@ -39,6 +39,15 @@ export const command: CommandDefinition = {
       return;
     }
     const userId = interaction.options.getString("user_id", true);
+    if (!userId) {
+      const embed = buildEmbed(context, {
+        title: "User ID Required",
+        description: "Please provide a valid user ID to unban.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
     await guildContext.guild.bans.remove(userId, reason);
     await logModerationAction(

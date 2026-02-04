@@ -40,6 +40,15 @@ export const command: CommandDefinition = {
       return;
     }
     const target = interaction.options.getUser("user", true);
+    if (!target) {
+      const embed = buildEmbed(context, {
+        title: "User Not Found",
+        description: "Please specify a valid user to warn.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
     await createWarning(pool, guildContext.guild.id, target.id, guildContext.member.id, reason);
     await logModerationAction(

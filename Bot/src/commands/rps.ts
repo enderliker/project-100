@@ -35,6 +35,15 @@ export const command: CommandDefinition = {
     ),
   execute: async (interaction, context) => {
     const playerChoice = interaction.options.getString("choice", true);
+    if (!playerChoice) {
+      const embed = buildEmbed(context, {
+        title: "Rock Paper Scissors",
+        description: "Please choose rock, paper, or scissors.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     if (!CHOICES.includes(playerChoice as (typeof CHOICES)[number])) {
       const embed = buildEmbed(context, {
         title: "Rock Paper Scissors",

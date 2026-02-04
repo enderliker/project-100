@@ -157,6 +157,15 @@ export const command: CommandDefinition = {
     ),
   execute: async (interaction, context) => {
     const expression = interaction.options.getString("expression", true);
+    if (!expression) {
+      const embed = buildEmbed(context, {
+        title: "Calculator",
+        description: "Please provide an expression to evaluate.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     try {
       const result = evaluateExpression(expression);
       const embed = buildEmbed(context, {
