@@ -1,5 +1,6 @@
 import { createLogger } from "@project/shared";
 import type { Pool } from "pg";
+import type { GuildSettings } from "./guild-settings";
 
 export interface GuildConfig {
   guildId: string;
@@ -12,6 +13,7 @@ export interface GuildConfig {
   adminroleId: string | null;
   toggles: Record<string, boolean>;
   rulesText: string | null;
+  settings: GuildSettings | null;
 }
 
 export interface ModlogEntry {
@@ -53,6 +55,7 @@ interface GuildConfigRow {
   adminrole_id: string | null;
   toggles: Record<string, boolean> | null;
   rules_text: string | null;
+  settings: GuildSettings | null;
 }
 
 interface WarningRow {
@@ -121,8 +124,12 @@ async function ensureGuildConfigTable(pool: Pool): Promise<void> {
       adminrole_id TEXT,
       toggles JSONB DEFAULT '{}'::jsonb,
       rules_text TEXT,
+      settings JSONB DEFAULT '{}'::jsonb,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`
+  );
+  await pool.query(
+    "ALTER TABLE guild_configs ADD COLUMN IF NOT EXISTS settings JSONB DEFAULT '{}'::jsonb"
   );
 }
 
@@ -195,7 +202,8 @@ export async function getGuildConfig(
     modroleId: row.modrole_id,
     adminroleId: row.adminrole_id,
     toggles: row.toggles ?? {},
-    rulesText: row.rules_text
+    rulesText: row.rules_text,
+    settings: row.settings ?? null
   };
 }
 
@@ -229,6 +237,9 @@ async function upsertGuildConfig(
   }
   if (update.rulesText !== undefined) {
     fields.push({ column: "rules_text", value: update.rulesText });
+  }
+  if (update.settings !== undefined) {
+    fields.push({ column: "settings", value: update.settings });
   }
   if (fields.length === 0) {
     return;
@@ -304,6 +315,14 @@ export async function setGuildRulesText(
   rulesText: string | null
 ): Promise<void> {
   await upsertGuildConfig(pool, guildId, { rulesText });
+}
+
+export async function setGuildSettings(
+  pool: Pool,
+  guildId: string,
+  settings: GuildSettings
+): Promise<void> {
+  await upsertGuildConfig(pool, guildId, { settings });
 }
 
 export async function setGuildToggle(

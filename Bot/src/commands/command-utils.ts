@@ -10,6 +10,7 @@ import type { Pool } from "pg";
 import { buildBaseEmbed } from "../embeds";
 import type { CommandExecutionContext } from "./types";
 import { createModlog, getGuildConfig } from "./storage";
+import { getGuildSettings } from "./guild-settings-store";
 
 export function buildEmbed(
   context: CommandExecutionContext,
@@ -184,11 +185,15 @@ export async function sendLogEmbed(
   if (!context.postgresPool) {
     return;
   }
-  const config = await getGuildConfig(context.postgresPool, guild.id);
-  if (!config?.logsChannelId) {
+  const [config, settings] = await Promise.all([
+    getGuildConfig(context.postgresPool, guild.id),
+    getGuildSettings(context.postgresPool, guild.id)
+  ]);
+  const logsChannelId = settings.loggingChannelId ?? config?.logsChannelId ?? null;
+  if (!logsChannelId) {
     return;
   }
-  const channel = await context.client.channels.fetch(config.logsChannelId);
+  const channel = await context.client.channels.fetch(logsChannelId);
   if (!channel || !channel.isTextBased()) {
     return;
   }

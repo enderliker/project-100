@@ -7,6 +7,7 @@ import {
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig, setGuildToggle } from "./storage";
+import { clearGuildSettingsCache, updateGuildSettings } from "./guild-settings-store";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -81,6 +82,16 @@ export const command: CommandDefinition = {
       return;
     }
     await setGuildToggle(pool, guildContext.guild.id, feature, enabled);
+    await updateGuildSettings(pool, guildContext.guild.id, {
+      features: {
+        ...(feature === "welcome" ? { welcome: enabled } : {}),
+        ...(feature === "goodbye" ? { goodbye: enabled } : {}),
+        ...(feature === "autorole" ? { autorole: enabled } : {}),
+        ...(feature === "logs" ? { logs: enabled } : {}),
+        ...(feature === "rules" ? { rules: enabled } : {})
+      }
+    });
+    clearGuildSettingsCache(guildContext.guild.id);
     await context.redis.del(`counter:${guildContext.guild.id}:${feature}`);
     const embed = buildEmbed(context, {
       title: "Toggle Updated",

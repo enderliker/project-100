@@ -1,4 +1,5 @@
 import type { PermissionResolvable } from "discord.js";
+import { getGuildSettings } from "../commands/guild-settings-store";
 import type { Command } from "./Command";
 import type { CommandContext } from "./Context";
 
@@ -75,14 +76,32 @@ function checkGuildDmRules(command: Command, context: CommandContext): Middlewar
   return { ok: true };
 }
 
-function checkCooldown(command: Command, context: CommandContext): MiddlewareResult {
+function resolveCooldownSeconds(
+  command: Command,
+  overrideCooldown: number | undefined
+): number | null {
+  if (typeof overrideCooldown === "number" && overrideCooldown >= 0) {
+    return overrideCooldown;
+  }
   if (!command.cooldownSeconds || command.cooldownSeconds <= 0) {
+    return null;
+  }
+  return command.cooldownSeconds;
+}
+
+function checkCooldown(
+  command: Command,
+  context: CommandContext,
+  overrideCooldown?: number
+): MiddlewareResult {
+  const cooldownSeconds = resolveCooldownSeconds(command, overrideCooldown);
+  if (!cooldownSeconds) {
     return { ok: true };
   }
   const key = `${context.user.id}:${command.name}`;
   const now = Date.now();
   const lastUsed = cooldowns.get(key);
-  const cooldownMs = command.cooldownSeconds * 1000;
+  const cooldownMs = cooldownSeconds * 1000;
   if (lastUsed && now - lastUsed < cooldownMs) {
     const remaining = Math.ceil((cooldownMs - (now - lastUsed)) / 1000);
     return {
@@ -109,12 +128,71 @@ function checkMaintenance(context: CommandContext): MiddlewareResult {
   };
 }
 
-export function runMiddleware(command: Command, context: CommandContext): MiddlewareResult {
+async function checkCommandOverrides(
+  command: Command,
+  context: CommandContext
+): Promise<MiddlewareResult & { cooldownOverride?: number }> {
+  if (!context.guild || !context.postgresPool) {
+    return { ok: true };
+  }
+
+  const settings = await getGuildSettings(context.postgresPool, context.guild.id);
+  const override = settings.commands[command.name];
+  if (!override) {
+    return { ok: true };
+  }
+
+  if (override.enabled === false) {
+    return {
+      ok: false,
+      message: "This command is disabled for this server."
+    };
+  }
+
+  if (override.denyUsers?.includes(context.user.id)) {
+    return {
+      ok: false,
+      message: "You are not allowed to use this command."
+    };
+  }
+
+  if (context.member) {
+    const memberRoleIds = new Set(context.member.roles.cache.map((role) => role.id));
+    if (override.denyRoles?.some((roleId) => memberRoleIds.has(roleId))) {
+      return {
+        ok: false,
+        message: "You are not allowed to use this command."
+      };
+    }
+  }
+
+  const allowUsers = override.allowUsers ?? [];
+  const allowRoles = override.allowRoles ?? [];
+  if (allowUsers.length > 0 || allowRoles.length > 0) {
+    const isAllowedUser = allowUsers.includes(context.user.id);
+    const memberRoleIds = context.member
+      ? new Set(context.member.roles.cache.map((role) => role.id))
+      : new Set<string>();
+    const isAllowedRole = allowRoles.some((roleId) => memberRoleIds.has(roleId));
+    if (!isAllowedUser && !isAllowedRole) {
+      return {
+        ok: false,
+        message: "You are not allowed to use this command."
+      };
+    }
+  }
+
+  return { ok: true, cooldownOverride: override.cooldownSeconds };
+}
+
+export async function runMiddleware(
+  command: Command,
+  context: CommandContext
+): Promise<MiddlewareResult> {
   const checks = [
     () => checkMaintenance(context),
     () => checkGuildDmRules(command, context),
-    () => checkPermissions(command, context),
-    () => checkCooldown(command, context)
+    () => checkPermissions(command, context)
   ];
 
   for (const check of checks) {
@@ -124,5 +202,10 @@ export function runMiddleware(command: Command, context: CommandContext): Middle
     }
   }
 
-  return { ok: true };
+  const overrideResult = await checkCommandOverrides(command, context);
+  if (!overrideResult.ok) {
+    return overrideResult;
+  }
+
+  return checkCooldown(command, context, overrideResult.cooldownOverride);
 }

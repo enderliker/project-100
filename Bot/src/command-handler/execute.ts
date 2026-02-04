@@ -52,7 +52,7 @@ async function executeCommand(
     );
   }
 
-  const middlewareResult = runMiddleware(command, context);
+  const middlewareResult = await runMiddleware(command, context);
   if (!middlewareResult.ok) {
     await handleMiddlewareFailure(interaction, middlewareResult.message ?? "Command blocked.");
     return;
