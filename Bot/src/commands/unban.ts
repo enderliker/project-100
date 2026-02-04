@@ -4,6 +4,7 @@ import {
   buildEmbed,
   hasModAccess,
   logModerationAction,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -38,6 +39,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["BanMembers"],
+      "unban members"
+    );
+    if (!botMember) {
+      return;
+    }
     const userId = interaction.options.getString("user_id", true);
     if (!userId) {
       const embed = buildEmbed(context, {
@@ -49,7 +60,17 @@ export const command: CommandDefinition = {
       return;
     }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
-    await guildContext.guild.bans.remove(userId, reason);
+    try {
+      await guildContext.guild.bans.remove(userId, reason);
+    } catch {
+      const embed = buildEmbed(context, {
+        title: "Unban Failed",
+        description: "Unable to unban that user. Please check the ID and my permissions.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     await logModerationAction(
       context,
       guildContext.guild,

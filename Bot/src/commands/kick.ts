@@ -5,6 +5,7 @@ import {
   formatUserLabel,
   hasModAccess,
   logModerationAction,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -39,6 +40,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["KickMembers"],
+      "kick members"
+    );
+    if (!botMember) {
+      return;
+    }
     const targetMember = interaction.options.getMember("user", true);
     if (!targetMember) {
       const embed = buildEmbed(context, {
@@ -49,8 +60,45 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    if (targetMember.id === interaction.user.id) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Target",
+        description: "You cannot kick yourself.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    if (context.client.user && targetMember.id === context.client.user.id) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Target",
+        description: "You cannot kick the bot.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    if (targetMember.kickable === false) {
+      const embed = buildEmbed(context, {
+        title: "Cannot Kick Member",
+        description: "I cannot kick this member due to role hierarchy or permissions.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
-    await targetMember.kick(reason);
+    try {
+      await targetMember.kick(reason);
+    } catch {
+      const embed = buildEmbed(context, {
+        title: "Kick Failed",
+        description: "Unable to kick that member. Please check my permissions.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     await logModerationAction(
       context,
       guildContext.guild,

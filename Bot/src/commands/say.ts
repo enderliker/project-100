@@ -3,6 +3,7 @@ import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
   hasModAccess,
+  requireBotPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -34,7 +35,26 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const botMember = await requireBotPermissions(
+      interaction,
+      context,
+      guildContext.guild,
+      ["SendMessages"],
+      "send messages"
+    );
+    if (!botMember) {
+      return;
+    }
     const message = interaction.options.getString("message", true);
+    if (message === null) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Message",
+        description: "Please provide a valid message to send.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const channel = interaction.channel;
     if (!channel || !channel.isTextBased()) {
       const embed = buildEmbed(context, {
@@ -45,7 +65,17 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    await (channel as any).send({ content: message });
+    try {
+      await channel.send({ content: message });
+    } catch {
+      const embed = buildEmbed(context, {
+        title: "Message Failed",
+        description: "Unable to send that message. Please check my permissions.",
+        variant: "error"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
     const embed = buildEmbed(context, {
       title: "Message Sent",
       description: "Your message has been sent."

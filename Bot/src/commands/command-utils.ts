@@ -35,6 +35,76 @@ export async function requireGuildContext(
   return { guild: interaction.guild, member: interaction.member };
 }
 
+async function replyEphemeral(
+  interaction: {
+    reply: (options: InteractionReplyOptions) => Promise<void>;
+    followUp?: (options: InteractionReplyOptions) => Promise<void>;
+    replied?: boolean;
+    deferred?: boolean;
+  },
+  options: InteractionReplyOptions
+): Promise<void> {
+  if (interaction.replied || interaction.deferred) {
+    if (interaction.followUp) {
+      await interaction.followUp({ ...options, ephemeral: true });
+      return;
+    }
+  }
+  await interaction.reply({ ...options, ephemeral: true });
+}
+
+async function getBotMember(
+  context: CommandExecutionContext,
+  guild: Guild
+): Promise<GuildMember | null> {
+  if (guild.members.me) {
+    return guild.members.me;
+  }
+  if (!context.client.user) {
+    return null;
+  }
+  try {
+    return await guild.members.fetch(context.client.user.id);
+  } catch {
+    return null;
+  }
+}
+
+export async function requireBotPermissions(
+  interaction: {
+    reply: (options: InteractionReplyOptions) => Promise<void>;
+    followUp?: (options: InteractionReplyOptions) => Promise<void>;
+    replied?: boolean;
+    deferred?: boolean;
+  },
+  context: CommandExecutionContext,
+  guild: Guild,
+  permissions: string[],
+  action: string
+): Promise<GuildMember | null> {
+  const botMember = await getBotMember(context, guild);
+  if (!botMember) {
+    const embed = buildEmbed(context, {
+      title: "Bot Unavailable",
+      description: "The bot member could not be resolved for this server.",
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return null;
+  }
+  const missing = permissions.filter((permission) => !botMember.permissions.has(permission));
+  if (missing.length > 0) {
+    const embed = buildEmbed(context, {
+      title: "Bot Missing Permissions",
+      description: `I need ${missing.join(", ")} to ${action}.`,
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return null;
+  }
+  return botMember;
+}
+
 export function requirePostgres(
   context: CommandExecutionContext,
   reply: (options: InteractionReplyOptions | string) => Promise<void>
@@ -97,6 +167,13 @@ export function formatUserLabel(user: User): string {
 
 export function formatChannelLabel(channel: Channel): string {
   return `<#${channel.id}>`;
+}
+
+export function trimEmbedDescription(value: string, maxLength = 4000): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
 }
 
 export async function sendLogEmbed(
