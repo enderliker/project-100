@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
-import { buildEmbed } from "./command-utils";
+import { buildEmbed, fetchMemberSafe } from "./command-utils";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
@@ -11,7 +11,7 @@ export const command: CommandDefinition = {
     ),
   execute: async (interaction, context) => {
     const user = interaction.options.getUser("user") ?? interaction.user;
-    const member = interaction.options.getMember("user");
+    const member = interaction.guild ? await fetchMemberSafe(interaction.guild, user.id) : null;
     const lines = [
       `User: <@${user.id}>`,
       `ID: ${user.id}`,

@@ -4,9 +4,12 @@ import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
   hasModAccess,
+  handleCommandError,
   logModerationAction,
   requireBotPermissions,
+  requireChannelPermissions,
   requireGuildContext,
+  requireInvokerPermissions,
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
@@ -57,6 +60,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["ManageMessages"],
+      "clear messages"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const botMember = await requireBotPermissions(
       interaction,
       context,
@@ -77,6 +90,17 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasChannelPermissions = await requireChannelPermissions(
+      interaction,
+      context,
+      channel,
+      botMember,
+      ["ManageMessages"],
+      "clear messages"
+    );
+    if (!hasChannelPermissions) {
+      return;
+    }
     const amount = interaction.options.getInteger("amount", true);
     if (amount === null) {
       const embed = buildEmbed(context, {
@@ -90,13 +114,11 @@ export const command: CommandDefinition = {
     let deleted: Map<string, Message>;
     try {
       deleted = await channel.bulkDelete(amount, true);
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Clear Failed",
-        description: "Unable to delete messages. Please check my permissions.",
-        variant: "error"
+        description: "Unable to delete messages. Please check my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     const deletedCount = deleted.size;

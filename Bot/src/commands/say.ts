@@ -3,7 +3,9 @@ import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
   hasModAccess,
+  handleCommandError,
   requireBotPermissions,
+  requireChannelPermissions,
   requireGuildContext,
   requirePostgres
 } from "./command-utils";
@@ -65,15 +67,24 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasChannelPermissions = await requireChannelPermissions(
+      interaction,
+      context,
+      channel,
+      botMember,
+      ["SendMessages"],
+      "send messages"
+    );
+    if (!hasChannelPermissions) {
+      return;
+    }
     try {
       await channel.send({ content: message });
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Message Failed",
-        description: "Unable to send that message. Please check my permissions.",
-        variant: "error"
+        description: "Unable to send that message. Please check my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     const embed = buildEmbed(context, {

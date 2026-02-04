@@ -2,12 +2,17 @@ import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
+  fetchMemberSafe,
   formatUserLabel,
   hasModAccess,
+  hasAdministratorPermission,
+  handleCommandError,
   logModerationAction,
   requireBotPermissions,
   requireGuildContext,
-  requirePostgres
+  requireInvokerPermissions,
+  requirePostgres,
+  validateModerationTarget
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
 
@@ -38,6 +43,16 @@ export const command: CommandDefinition = {
         variant: "error"
       });
       await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["BanMembers"],
+      "ban members"
+    );
+    if (!hasPermissions) {
       return;
     }
     const botMember = await requireBotPermissions(
@@ -78,28 +93,48 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const targetMember = await guildContext.guild.members
-      .fetch(target.id)
-      .catch(() => null);
-    if (targetMember && targetMember.bannable === false) {
+    if (target.id === guildContext.guild.ownerId) {
       const embed = buildEmbed(context, {
-        title: "Cannot Ban Member",
-        description: "I cannot ban this member due to role hierarchy or permissions.",
+        title: "Invalid Target",
+        description: "You cannot ban the server owner.",
         variant: "warning"
       });
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    if (target.bot && !hasAdministratorPermission(guildContext.member)) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Target",
+        description: "You need Administrator to ban bot accounts.",
+        variant: "warning"
+      });
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+    const targetMember = await fetchMemberSafe(guildContext.guild, target.id);
+    if (targetMember) {
+      const allowed = await validateModerationTarget({
+        interaction,
+        context,
+        guild: guildContext.guild,
+        invoker: guildContext.member,
+        botMember,
+        targetMember,
+        action: "ban",
+        allowBotTargetWithAdmin: true
+      });
+      if (!allowed) {
+        return;
+      }
+    }
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
     try {
       await guildContext.guild.members.ban(target, { reason });
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Ban Failed",
-        description: "Unable to ban that user. Please check my permissions.",
-        variant: "error"
+        description: "Unable to ban that user. Please check my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     await logModerationAction(

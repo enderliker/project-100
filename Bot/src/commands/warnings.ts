@@ -4,7 +4,9 @@ import {
   buildEmbed,
   formatUserLabel,
   hasModAccess,
+  handleCommandError,
   requireGuildContext,
+  requireInvokerPermissions,
   requirePostgres,
   trimEmbedDescription
 } from "./command-utils";
@@ -36,6 +38,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["ModerateMembers"],
+      "view warnings"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const target = interaction.options.getUser("user", true);
     if (!target) {
       const embed = buildEmbed(context, {
@@ -46,23 +58,30 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const warnings = await listWarnings(pool, guildContext.guild.id, target.id);
-    if (warnings.length === 0) {
+    try {
+      const warnings = await listWarnings(pool, guildContext.guild.id, target.id);
+      if (warnings.length === 0) {
+        const embed = buildEmbed(context, {
+          title: "Warnings",
+          description: `${formatUserLabel(target)} has no warnings.`
+        });
+        await interaction.reply({ embeds: [embed] });
+        return;
+      }
+      const lines = warnings.map(
+        (warning) =>
+          `${warning.createdAt.toISOString()} • ${warning.reason} • Moderator: <@${warning.moderatorId}>`
+      );
       const embed = buildEmbed(context, {
         title: "Warnings",
-        description: `${formatUserLabel(target)} has no warnings.`
+        description: trimEmbedDescription(lines.join("\n"))
       });
       await interaction.reply({ embeds: [embed] });
-      return;
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
+        title: "Warnings Failed",
+        description: "Unable to load warnings right now."
+      });
     }
-    const lines = warnings.map(
-      (warning) =>
-        `${warning.createdAt.toISOString()} • ${warning.reason} • Moderator: <@${warning.moderatorId}>`
-    );
-    const embed = buildEmbed(context, {
-      title: "Warnings",
-      description: trimEmbedDescription(lines.join("\n"))
-    });
-    await interaction.reply({ embeds: [embed] });
   }
 };

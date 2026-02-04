@@ -2,10 +2,12 @@ import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
 import {
   buildEmbed,
+  handleCommandError,
   hasModAccess,
   logModerationAction,
   requireBotPermissions,
   requireGuildContext,
+  requireInvokerPermissions,
   requirePostgres
 } from "./command-utils";
 import { getGuildConfig } from "./storage";
@@ -39,6 +41,16 @@ export const command: CommandDefinition = {
       await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
+    const hasPermissions = await requireInvokerPermissions(
+      interaction,
+      context,
+      guildContext.member,
+      ["BanMembers"],
+      "unban members"
+    );
+    if (!hasPermissions) {
+      return;
+    }
     const botMember = await requireBotPermissions(
       interaction,
       context,
@@ -62,13 +74,11 @@ export const command: CommandDefinition = {
     const reason = interaction.options.getString("reason") ?? "No reason provided.";
     try {
       await guildContext.guild.bans.remove(userId, reason);
-    } catch {
-      const embed = buildEmbed(context, {
+    } catch (error) {
+      await handleCommandError(interaction, context, error, {
         title: "Unban Failed",
-        description: "Unable to unban that user. Please check the ID and my permissions.",
-        variant: "error"
+        description: "Unable to unban that user. Please check the ID and my permissions."
       });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
     await logModerationAction(

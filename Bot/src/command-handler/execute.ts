@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import type { AutocompleteInteraction, ChatInputCommandInteraction } from "discord.js";
+import { DiscordAPIError } from "discord.js";
+import { RESTJSONErrorCodes } from "discord-api-types/v10";
 import { buildBaseEmbed } from "../embeds";
 import { createLogger } from "@project/shared";
 import type { CommandExecutionContext } from "../commands/types";
@@ -18,6 +20,82 @@ function createErrorResponse(correlationId: string, version: string) {
       title: "Command Error",
       description: `Something went wrong. Reference: \`${correlationId}\`.`,
       variant: "error"
+    }
+  );
+}
+
+function mapDiscordError(error: unknown): {
+  title: string;
+  description: string;
+  variant: "warning" | "error";
+} | null {
+  if (!(error instanceof DiscordAPIError)) {
+    return null;
+  }
+  switch (error.code) {
+    case RESTJSONErrorCodes.MissingPermissions:
+      return {
+        title: "Missing Permissions",
+        description: "I lack the permissions required to perform that action.",
+        variant: "error"
+      };
+    case RESTJSONErrorCodes.MissingAccess:
+      return {
+        title: "Missing Access",
+        description: "I no longer have access to that resource.",
+        variant: "error"
+      };
+    case RESTJSONErrorCodes.UnknownMember:
+      return {
+        title: "Member Not Found",
+        description: "That member could not be found in this server.",
+        variant: "warning"
+      };
+    case RESTJSONErrorCodes.UnknownUser:
+      return {
+        title: "User Not Found",
+        description: "That user could not be resolved.",
+        variant: "warning"
+      };
+    case RESTJSONErrorCodes.UnknownChannel:
+      return {
+        title: "Channel Not Found",
+        description: "That channel could not be resolved.",
+        variant: "warning"
+      };
+    case RESTJSONErrorCodes.UnknownMessage:
+      return {
+        title: "Message Not Found",
+        description: "That message could not be found.",
+        variant: "warning"
+      };
+    default:
+      if (error.status === 429) {
+        return {
+          title: "Rate Limited",
+          description: "Discord rate limited the request. Please try again shortly.",
+          variant: "warning"
+        };
+      }
+      return null;
+  }
+}
+
+function createMappedErrorResponse(
+  correlationId: string,
+  version: string,
+  error: unknown
+) {
+  const mapped = mapDiscordError(error);
+  if (!mapped) {
+    return createErrorResponse(correlationId, version);
+  }
+  return buildBaseEmbed(
+    { serviceName: "bot", version },
+    {
+      title: mapped.title,
+      description: `${mapped.description}\nReference: \`${correlationId}\`.`,
+      variant: mapped.variant
     }
   );
 }
@@ -73,7 +151,7 @@ async function executeCommand(
     handlerLogger.error(`stack="${stack}"`);
 
     const version = legacyContext.getVersion();
-    const embed = createErrorResponse(correlationId, version);
+    const embed = createMappedErrorResponse(correlationId, version, error);
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp({ embeds: [embed], ephemeral: true });
       return;

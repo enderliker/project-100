@@ -1,11 +1,12 @@
+import { DiscordAPIError, GuildMember } from "discord.js";
 import type {
   Channel,
   Guild,
-  GuildMember,
   InteractionReplyOptions,
   TextBasedChannel,
   User
 } from "discord.js";
+import { RESTJSONErrorCodes } from "discord-api-types/v10";
 import type { Pool } from "pg";
 import { buildBaseEmbed } from "../embeds";
 import type { CommandExecutionContext } from "./types";
@@ -21,10 +22,15 @@ export function buildEmbed(
 }
 
 export async function requireGuildContext(
-  interaction: { guild: Guild | null; member: GuildMember | null; reply: Function },
+  interaction: {
+    guild: Guild | null;
+    member: GuildMember | object | null;
+    user: User;
+    reply: Function;
+  },
   context: CommandExecutionContext
 ): Promise<{ guild: Guild; member: GuildMember } | null> {
-  if (!interaction.guild || !interaction.member) {
+  if (!interaction.guild) {
     const embed = buildEmbed(context, {
       title: "Server Only",
       description: "This command can only be used in a server.",
@@ -33,7 +39,20 @@ export async function requireGuildContext(
     await interaction.reply({ embeds: [embed], ephemeral: true });
     return null;
   }
-  return { guild: interaction.guild, member: interaction.member };
+  const member =
+    interaction.member instanceof GuildMember
+      ? interaction.member
+      : await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    const embed = buildEmbed(context, {
+      title: "Member Unavailable",
+      description: "Unable to resolve your member record for this server.",
+      variant: "warning"
+    });
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+    return null;
+  }
+  return { guild: interaction.guild, member };
 }
 
 async function replyEphemeral(
@@ -54,20 +73,21 @@ async function replyEphemeral(
   await interaction.reply({ ...options, ephemeral: true });
 }
 
-async function getBotMember(
+export async function getMeMemberSafe(
   context: CommandExecutionContext,
   guild: Guild
 ): Promise<GuildMember | null> {
-  if (guild.members.me) {
-    return guild.members.me;
-  }
-  if (!context.client.user) {
-    return null;
-  }
   try {
-    return await guild.members.fetch(context.client.user.id);
+    return await guild.members.fetchMe();
   } catch {
-    return null;
+    if (!context.client.user) {
+      return null;
+    }
+    try {
+      return await guild.members.fetch(context.client.user.id);
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -83,7 +103,7 @@ export async function requireBotPermissions(
   permissions: string[],
   action: string
 ): Promise<GuildMember | null> {
-  const botMember = await getBotMember(context, guild);
+  const botMember = await getMeMemberSafe(context, guild);
   if (!botMember) {
     const embed = buildEmbed(context, {
       title: "Bot Unavailable",
@@ -104,6 +124,71 @@ export async function requireBotPermissions(
     return null;
   }
   return botMember;
+}
+
+export async function requireInvokerPermissions(
+  interaction: {
+    reply: (options: InteractionReplyOptions) => Promise<void>;
+    followUp?: (options: InteractionReplyOptions) => Promise<void>;
+    replied?: boolean;
+    deferred?: boolean;
+  },
+  context: CommandExecutionContext,
+  member: GuildMember,
+  permissions: string[],
+  action: string
+): Promise<boolean> {
+  const missing = permissions.filter((permission) => !member.permissions.has(permission));
+  if (missing.length > 0) {
+    const embed = buildEmbed(context, {
+      title: "Permission Denied",
+      description: `You need ${missing.join(", ")} to ${action}.`,
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  return true;
+}
+
+type PermissionCheckChannel = {
+  permissionsFor: (member: GuildMember) => { has: (permission: string) => boolean } | null;
+};
+
+export async function requireChannelPermissions(
+  interaction: {
+    reply: (options: InteractionReplyOptions) => Promise<void>;
+    followUp?: (options: InteractionReplyOptions) => Promise<void>;
+    replied?: boolean;
+    deferred?: boolean;
+  },
+  context: CommandExecutionContext,
+  channel: PermissionCheckChannel,
+  member: GuildMember,
+  permissions: string[],
+  action: string
+): Promise<boolean> {
+  const channelPermissions = channel.permissionsFor(member);
+  if (!channelPermissions) {
+    const embed = buildEmbed(context, {
+      title: "Permission Denied",
+      description: `Unable to verify permissions to ${action} in this channel.`,
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  const missing = permissions.filter((permission) => !channelPermissions.has(permission));
+  if (missing.length > 0) {
+    const embed = buildEmbed(context, {
+      title: "Permission Denied",
+      description: `Missing ${missing.join(", ")} to ${action} in this channel.`,
+      variant: "error"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  return true;
 }
 
 export function requirePostgres(
@@ -193,7 +278,12 @@ export async function sendLogEmbed(
   if (!logsChannelId) {
     return;
   }
-  const channel = await context.client.channels.fetch(logsChannelId);
+  let channel: Channel | null;
+  try {
+    channel = await context.client.channels.fetch(logsChannelId);
+  } catch {
+    return;
+  }
   if (!channel || !channel.isTextBased()) {
     return;
   }
@@ -201,7 +291,184 @@ export async function sendLogEmbed(
     title: options.title,
     description: options.description
   });
-  await (channel as TextBasedChannel).send({ embeds: [embed] });
+  try {
+    await (channel as TextBasedChannel).send({ embeds: [embed] });
+  } catch {
+    return;
+  }
+}
+
+export async function fetchMemberSafe(
+  guild: Guild,
+  userId: string
+): Promise<GuildMember | null> {
+  try {
+    return await guild.members.fetch(userId);
+  } catch {
+    return null;
+  }
+}
+
+export async function validateModerationTarget(options: {
+  interaction: {
+    reply: (options: InteractionReplyOptions) => Promise<void>;
+    followUp?: (options: InteractionReplyOptions) => Promise<void>;
+    replied?: boolean;
+    deferred?: boolean;
+  };
+  context: CommandExecutionContext;
+  guild: Guild;
+  invoker: GuildMember;
+  botMember: GuildMember | null;
+  targetMember: GuildMember;
+  action: string;
+  allowBotTargetWithAdmin?: boolean;
+}): Promise<boolean> {
+  const { interaction, context, guild, invoker, botMember, targetMember, action } = options;
+  if (targetMember.id === invoker.id) {
+    const embed = buildEmbed(context, {
+      title: "Invalid Target",
+      description: `You cannot ${action} yourself.`,
+      variant: "warning"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  if (botMember && targetMember.id === botMember.id) {
+    const embed = buildEmbed(context, {
+      title: "Invalid Target",
+      description: `You cannot ${action} the bot.`,
+      variant: "warning"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  if (targetMember.id === guild.ownerId) {
+    const embed = buildEmbed(context, {
+      title: "Invalid Target",
+      description: `You cannot ${action} the server owner.`,
+      variant: "warning"
+    });
+    await replyEphemeral(interaction, { embeds: [embed] });
+    return false;
+  }
+  if (targetMember.user.bot && options.allowBotTargetWithAdmin) {
+    if (!hasAdministratorPermission(invoker)) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Target",
+        description: `You need Administrator to ${action} bot accounts.`,
+        variant: "warning"
+      });
+      await replyEphemeral(interaction, { embeds: [embed] });
+      return false;
+    }
+  }
+  if (invoker.id !== guild.ownerId) {
+    const invokerPosition = invoker.roles.highest.comparePositionTo(
+      targetMember.roles.highest
+    );
+    if (invokerPosition <= 0) {
+      const embed = buildEmbed(context, {
+        title: "Role Hierarchy",
+        description: `You cannot ${action} a member with an equal or higher role.`,
+        variant: "warning"
+      });
+      await replyEphemeral(interaction, { embeds: [embed] });
+      return false;
+    }
+  }
+  if (botMember) {
+    const botPosition = botMember.roles.highest.comparePositionTo(
+      targetMember.roles.highest
+    );
+    if (botPosition <= 0) {
+      const embed = buildEmbed(context, {
+        title: "Role Hierarchy",
+        description: `I cannot ${action} a member with an equal or higher role.`,
+        variant: "warning"
+      });
+      await replyEphemeral(interaction, { embeds: [embed] });
+      return false;
+    }
+  }
+  return true;
+}
+
+export function mapDiscordError(error: unknown): {
+  title: string;
+  description: string;
+  variant: "warning" | "error";
+} | null {
+  if (!(error instanceof DiscordAPIError)) {
+    return null;
+  }
+  switch (error.code) {
+    case RESTJSONErrorCodes.MissingPermissions:
+      return {
+        title: "Missing Permissions",
+        description: "I lack the permissions required to perform that action.",
+        variant: "error"
+      };
+    case RESTJSONErrorCodes.MissingAccess:
+      return {
+        title: "Missing Access",
+        description: "I no longer have access to that resource.",
+        variant: "error"
+      };
+    case RESTJSONErrorCodes.UnknownMember:
+      return {
+        title: "Member Not Found",
+        description: "That member could not be found in this server.",
+        variant: "warning"
+      };
+    case RESTJSONErrorCodes.UnknownUser:
+      return {
+        title: "User Not Found",
+        description: "That user could not be resolved.",
+        variant: "warning"
+      };
+    case RESTJSONErrorCodes.UnknownChannel:
+      return {
+        title: "Channel Not Found",
+        description: "That channel could not be resolved.",
+        variant: "warning"
+      };
+    case RESTJSONErrorCodes.UnknownMessage:
+      return {
+        title: "Message Not Found",
+        description: "That message could not be found.",
+        variant: "warning"
+      };
+    default:
+      if (error.status === 429) {
+        return {
+          title: "Rate Limited",
+          description: "Discord rate limited the request. Please try again shortly.",
+          variant: "warning"
+        };
+      }
+      return null;
+  }
+}
+
+export async function handleCommandError(
+  interaction: {
+    reply: (options: InteractionReplyOptions) => Promise<void>;
+    followUp?: (options: InteractionReplyOptions) => Promise<void>;
+    replied?: boolean;
+    deferred?: boolean;
+  },
+  context: CommandExecutionContext,
+  error: unknown,
+  fallback: { title: string; description: string }
+): Promise<void> {
+  const mapped = mapDiscordError(error);
+  const embed = buildEmbed(context, {
+    title: mapped?.title ?? fallback.title,
+    description: mapped?.description ?? fallback.description,
+    variant: mapped?.variant ?? "error"
+  });
+  await replyEphemeral(interaction, { embeds: [embed] });
 }
 
 export async function logModerationAction(
