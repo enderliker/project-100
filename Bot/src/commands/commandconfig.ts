@@ -378,6 +378,18 @@ export const command: CommandDefinition = {
 
     if (subcommand === "reset") {
       const scope = interaction.options.getString("scope", true);
+      if (
+        !isModeration &&
+        (scope === "allow-roles" || scope === "allow-users")
+      ) {
+        const embed = buildEmbed(context, {
+          title: "Allow List Not Available",
+          description: "Public commands are default-allow and cannot use allow lists.",
+          variant: "warning"
+        });
+        await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+        return;
+      }
       const nextOverride: CommandOverride = { ...currentOverride };
       if (scope === "all") {
         await updateGuildSettings(pool, guildContext.guild.id, {
