@@ -14,92 +14,22 @@ import {
   createLogger,
   checkRemoteService,
   normalizeStatusCheckOptions,
-  ServiceStateTracker
+  ServiceStateTracker,
+  envParsers,
+  loadConfig,
+  registerProcessHandlers
 } from "@project/shared";
 import { RedisClient } from "@project/shared";
 import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
-import { URL } from "url";
 
-const REQUIRED_ENV = [
-  "WORKER2_QUEUE_NAME",
-  "WORKER2_DEAD_LETTER_QUEUE",
-  "WORKER2_MAX_ATTEMPTS",
-  "WORKER2_IDEMPOTENCY_TTL_SEC",
-  "WORKER2_BACKOFF_BASE_MS",
-  "HEALTH_CHECK_INTERVAL_MS",
-  "HEALTH_CHECK_TIMEOUT_MS",
-  "GIT_REPO_PATH",
-  "GIT_REMOTE",
-  "GIT_BRANCH",
-  "PG_QUERY_BASE_DELAY_MS",
-  "PG_QUERY_MAX_DELAY_MS"
-];
 const SENSITIVE_ENV = ["REDIS_PASSWORD", "PG_PASSWORD"];
 const startupLogger = createLogger("startup");
 const redisLogger = createLogger("redis");
 const postgresLogger = createLogger("postgres");
 const healthLogger = createLogger("health");
 
-function getRequiredEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
-
-function parseNumber(name: string): number {
-  const raw = getRequiredEnv(name);
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number`);
-  }
-  return value;
-}
-
-function parseOptionalNumber(name: string): number | null {
-  const raw = process.env[name];
-  if (!raw) {
-    return null;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number when set`);
-  }
-  return value;
-}
-
-function parseNumberWithDefault(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (!raw) {
-    return defaultValue;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number when set`);
-  }
-  return value;
-}
-
-function parseOptionalUrl(name: string): string | null {
-  const raw = process.env[name];
-  if (!raw) {
-    return null;
-  }
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  try {
-    // eslint-disable-next-line no-new
-    new URL(trimmed);
-    return trimmed;
-  } catch {
-    throw new Error(`${name} must be a valid URL when set`);
-  }
-}
 
 function sanitizeErrorStack(stack: string): string {
   let sanitized = stack;
@@ -212,6 +142,7 @@ function logRedisStartupFailure(error: unknown): void {
 
 async function main(): Promise<void> {
   startupLogger.info("event=env_loaded");
+  registerProcessHandlers({ logger: startupLogger, sensitiveEnv: SENSITIVE_ENV });
 
   let queryOptions: {
     maxRetries: number;
@@ -233,33 +164,118 @@ async function main(): Promise<void> {
   let gitBranch: string;
 
   try {
-    for (const env of REQUIRED_ENV) {
-      getRequiredEnv(env);
-    }
+    const config = loadConfig({
+      queueName: {
+        name: "WORKER2_QUEUE_NAME",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      deadLetterQueue: {
+        name: "WORKER2_DEAD_LETTER_QUEUE",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      maxAttempts: {
+        name: "WORKER2_MAX_ATTEMPTS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      idempotencyTtl: {
+        name: "WORKER2_IDEMPOTENCY_TTL_SEC",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      baseBackoffMs: {
+        name: "WORKER2_BACKOFF_BASE_MS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      healthPort: {
+        name: "HEALTH_PORT",
+        parse: envParsers.positiveNumber(),
+        required: false,
+        default: 3001
+      },
+      botHealthUrl: {
+        name: "BOT_HEALTH_URL",
+        parse: envParsers.url(),
+        required: false,
+        default: null
+      },
+      workerBotHealthUrl: {
+        name: "WORKER2_BOT_HEALTH_URL",
+        parse: envParsers.url(),
+        required: false,
+        default: null
+      },
+      healthCheckIntervalMs: {
+        name: "HEALTH_CHECK_INTERVAL_MS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      healthCheckTimeoutMs: {
+        name: "HEALTH_CHECK_TIMEOUT_MS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      gitRepoPath: {
+        name: "GIT_REPO_PATH",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      gitRemote: {
+        name: "GIT_REMOTE",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      gitBranch: {
+        name: "GIT_BRANCH",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      statusCheckTimeoutMs: {
+        name: "STATUS_CHECK_TIMEOUT_MS",
+        parse: envParsers.optionalPositiveNumber(),
+        required: false,
+        default: null
+      },
+      statusCheckRetries: {
+        name: "STATUS_CHECK_RETRIES",
+        parse: envParsers.optionalPositiveNumber(),
+        required: false,
+        default: null
+      },
+      baseDelayMs: {
+        name: "PG_QUERY_BASE_DELAY_MS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      maxDelayMs: {
+        name: "PG_QUERY_MAX_DELAY_MS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      }
+    });
 
     queryOptions = {
       maxRetries: parsePgQueryMaxRetries(startupLogger),
-      baseDelayMs: parseNumber("PG_QUERY_BASE_DELAY_MS"),
-      maxDelayMs: parseNumber("PG_QUERY_MAX_DELAY_MS")
+      baseDelayMs: config.baseDelayMs,
+      maxDelayMs: config.maxDelayMs
     };
 
-    queueName = getRequiredEnv("WORKER2_QUEUE_NAME");
-    deadLetterQueue = getRequiredEnv("WORKER2_DEAD_LETTER_QUEUE");
-    maxAttempts = parseNumber("WORKER2_MAX_ATTEMPTS");
-    idempotencyTtl = parseNumber("WORKER2_IDEMPOTENCY_TTL_SEC");
-    baseBackoffMs = parseNumber("WORKER2_BACKOFF_BASE_MS");
-    healthPort = parseNumberWithDefault("HEALTH_PORT", 3001);
-    botHealthUrl =
-      parseOptionalUrl("BOT_HEALTH_URL") ??
-      parseOptionalUrl("WORKER2_BOT_HEALTH_URL") ??
-      null;
-    parseNumber("HEALTH_CHECK_INTERVAL_MS");
-    healthCheckTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
-    gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
-    gitRemote = getRequiredEnv("GIT_REMOTE");
-    gitBranch = getRequiredEnv("GIT_BRANCH");
-    statusCheckTimeoutMs = parseOptionalNumber("STATUS_CHECK_TIMEOUT_MS") ?? 1500;
-    statusCheckRetries = parseOptionalNumber("STATUS_CHECK_RETRIES") ?? 1;
+    queueName = config.queueName;
+    deadLetterQueue = config.deadLetterQueue;
+    maxAttempts = config.maxAttempts;
+    idempotencyTtl = config.idempotencyTtl;
+    baseBackoffMs = config.baseBackoffMs;
+    healthPort = config.healthPort;
+    botHealthUrl = config.botHealthUrl ?? config.workerBotHealthUrl ?? null;
+    healthCheckTimeoutMs = config.healthCheckTimeoutMs;
+    gitRepoPath = config.gitRepoPath;
+    gitRemote = config.gitRemote;
+    gitBranch = config.gitBranch;
+    statusCheckTimeoutMs = config.statusCheckTimeoutMs ?? 1500;
+    statusCheckRetries = config.statusCheckRetries ?? 1;
   } catch (error) {
     exitWithConfigError(error);
   }
