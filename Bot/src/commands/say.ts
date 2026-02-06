@@ -10,6 +10,33 @@ import {
 } from "./command-utils";
 import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
 
+const MAX_SAY_LENGTH = 2000;
+
+type SayValidationResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string };
+
+export function validateSayMessage(raw: string): SayValidationResult {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return { ok: false, error: "Message cannot be empty or whitespace." };
+  }
+  if (trimmed.length > MAX_SAY_LENGTH) {
+    return {
+      ok: false,
+      error: `Message must be ${MAX_SAY_LENGTH} characters or fewer.`
+    };
+  }
+  return { ok: true, message: trimmed };
+}
+
+export function buildSayPayload(message: string) {
+  return {
+    content: message,
+    allowedMentions: { parse: [] as const }
+  };
+}
+
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
     .setName("say")
@@ -36,11 +63,21 @@ export const command: CommandDefinition = {
     if (!botMember) {
       return;
     }
-    const message = interaction.options.getString("message", true);
-    if (message === null) {
+    const messageInput = interaction.options.getString("message", true);
+    if (messageInput === null) {
       const embed = buildEmbed(context, {
         title: "Invalid Message",
         description: "Please provide a valid message to send.",
+        variant: "warning"
+      });
+      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
+      return;
+    }
+    const validation = validateSayMessage(messageInput);
+    if (!validation.ok) {
+      const embed = buildEmbed(context, {
+        title: "Invalid Message",
+        description: validation.error,
         variant: "warning"
       });
       await safeRespond(interaction, { embeds: [embed], ephemeral: true });
@@ -69,7 +106,7 @@ export const command: CommandDefinition = {
     }
     await safeDefer(interaction, { ephemeral: true });
     try {
-      await channel.send({ content: message });
+      await channel.send(buildSayPayload(validation.message));
     } catch (error) {
       await handleCommandError(interaction, context, error, {
         title: "Message Failed",

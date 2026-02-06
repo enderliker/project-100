@@ -18,7 +18,10 @@ import {
   createLogger,
   ServiceStateTracker,
   RemoteServiceCheckResult,
-  checkRemoteService
+  checkRemoteService,
+  envParsers,
+  loadConfig,
+  registerProcessHandlers
 } from "@project/shared";
 import { execFileSync } from "child_process";
 import { URL } from "url";
@@ -29,22 +32,6 @@ import {
   registerCommandDefinitions,
   reloadDiscordCommands
 } from "./command-handler/registry";
-
-const REQUIRED_ENV = [
-  "BOT_RATE_LIMIT",
-  "BOT_RATE_WINDOW_SEC",
-  "BOT_QUEUE_NAME",
-  "BOT_CHECK_URLS",
-  "HEALTH_CHECK_INTERVAL_MS",
-  "HEALTH_CHECK_TIMEOUT_MS",
-  "GIT_REPO_PATH",
-  "GIT_REMOTE",
-  "GIT_BRANCH",
-  "DISCORD_TOKEN",
-  "DISCORD_APP_ID",
-  "WORKER1_URL",
-  "WORKER2_URL"
-];
 
 const SENSITIVE_ENV = ["DISCORD_TOKEN", "REDIS_PASSWORD", "PG_PASSWORD"];
 const startupLogger = createLogger("startup");
@@ -65,14 +52,6 @@ const POSTGRES_REQUIRED_ENV = [
   "PG_QUERY_BASE_DELAY_MS",
   "PG_QUERY_MAX_DELAY_MS"
 ];
-
-function getRequiredEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
 
 function sanitizeErrorStack(stack: string): string {
   let sanitized = stack;
@@ -113,72 +92,6 @@ function runBuildForUpdatedRepo(repoPath: string): void {
   startupLogger.info("event=repo_build_complete reason=git_update");
 }
 
-function parseNumber(name: string): number {
-  const raw = getRequiredEnv(name);
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number`);
-  }
-  return value;
-}
-
-function parseOptionalNumber(name: string): number | null {
-  const raw = process.env[name];
-  if (!raw) {
-    return null;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number when set`);
-  }
-  return value;
-}
-
-function parseNumberWithDefault(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (!raw) {
-    return defaultValue;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a positive number when set`);
-  }
-  return value;
-}
-
-function parseUrlList(name: string): string[] {
-  const raw = getRequiredEnv(name);
-  const urls = raw
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-  if (urls.length === 0) {
-    throw new Error(`${name} must include at least one URL`);
-  }
-  return urls;
-}
-
-function parseRequiredUrl(name: string): string {
-  const trimmed = getRequiredEnv(name).trim();
-  if (!trimmed) {
-    throw new Error(`${name} must be a valid URL`);
-  }
-  try {
-    // eslint-disable-next-line no-new
-    new URL(trimmed);
-    return trimmed;
-  } catch {
-    throw new Error(`${name} must be a valid URL`);
-  }
-}
-
-function getDiscordAppId(): string {
-  const value = getRequiredEnv("DISCORD_APP_ID");
-  if (!/^\d+$/.test(value)) {
-    throw new Error("DISCORD_APP_ID must be a numeric Discord application id");
-  }
-  return value;
-}
 
 function getClientIp(req: http.IncomingMessage): string {
   const forwarded = req.headers["x-forwarded-for"];
@@ -319,6 +232,7 @@ function deriveBotState(
 
 async function main(): Promise<void> {
   startupLogger.info("event=env_loaded");
+  registerProcessHandlers({ logger: startupLogger, sensitiveEnv: SENSITIVE_ENV });
 
   let port: number;
   let rateLimitMax: number;
@@ -340,30 +254,123 @@ async function main(): Promise<void> {
   let postgresPool: Pool | null = null;
 
   try {
-    for (const env of REQUIRED_ENV) {
-      getRequiredEnv(env);
-    }
+    const config = loadConfig({
+      port: {
+        name: "HTTP_PORT",
+        parse: envParsers.positiveNumber(),
+        required: false,
+        default: 3028
+      },
+      rateLimitMax: {
+        name: "BOT_RATE_LIMIT",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      rateWindow: {
+        name: "BOT_RATE_WINDOW_SEC",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      queueName: {
+        name: "BOT_QUEUE_NAME",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      maxLoad: {
+        name: "BOT_MAX_LOAD1",
+        parse: envParsers.optionalPositiveNumber(),
+        required: false,
+        default: null
+      },
+      healthPort: {
+        name: "HEALTH_PORT",
+        parse: envParsers.positiveNumber(),
+        required: false,
+        default: 3001
+      },
+      extraCheckUrls: {
+        name: "BOT_CHECK_URLS",
+        parse: envParsers.urlList(),
+        required: true
+      },
+      healthCheckIntervalMs: {
+        name: "HEALTH_CHECK_INTERVAL_MS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      healthCheckTimeoutMs: {
+        name: "HEALTH_CHECK_TIMEOUT_MS",
+        parse: envParsers.positiveNumber(),
+        required: true
+      },
+      gitRepoPath: {
+        name: "GIT_REPO_PATH",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      gitRemote: {
+        name: "GIT_REMOTE",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      gitBranch: {
+        name: "GIT_BRANCH",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      discordToken: {
+        name: "DISCORD_TOKEN",
+        parse: envParsers.nonEmptyString(),
+        required: true
+      },
+      discordAppId: {
+        name: "DISCORD_APP_ID",
+        parse: envParsers.numericString(),
+        required: true
+      },
+      workerBaseUrl: {
+        name: "WORKER1_URL",
+        parse: envParsers.url(),
+        required: true
+      },
+      worker2BaseUrl: {
+        name: "WORKER2_URL",
+        parse: envParsers.url(),
+        required: true
+      },
+      statusCheckTimeoutMs: {
+        name: "STATUS_CHECK_TIMEOUT_MS",
+        parse: envParsers.optionalPositiveNumber(),
+        required: false,
+        default: null
+      },
+      statusCheckRetries: {
+        name: "STATUS_CHECK_RETRIES",
+        parse: envParsers.optionalPositiveNumber(),
+        required: false,
+        default: null
+      }
+    });
 
-    port = parseNumberWithDefault("HTTP_PORT", 3028);
-    rateLimitMax = parseNumber("BOT_RATE_LIMIT");
-    rateWindow = parseNumber("BOT_RATE_WINDOW_SEC");
-    queueName = getRequiredEnv("BOT_QUEUE_NAME");
-    maxLoad = parseOptionalNumber("BOT_MAX_LOAD1");
-    healthPort = parseNumberWithDefault("HEALTH_PORT", 3001);
-    extraCheckUrls = parseUrlList("BOT_CHECK_URLS");
-    parseNumber("HEALTH_CHECK_INTERVAL_MS");
-    healthCheckTimeoutMs = parseNumber("HEALTH_CHECK_TIMEOUT_MS");
-    gitRepoPath = getRequiredEnv("GIT_REPO_PATH");
-    gitRemote = getRequiredEnv("GIT_REMOTE");
-    gitBranch = getRequiredEnv("GIT_BRANCH");
-    discordToken = getRequiredEnv("DISCORD_TOKEN");
-    discordAppId = getDiscordAppId();
-    const workerBaseUrl = parseRequiredUrl("WORKER1_URL");
-    const worker2BaseUrl = parseRequiredUrl("WORKER2_URL");
+    port = config.port;
+    rateLimitMax = config.rateLimitMax;
+    rateWindow = config.rateWindow;
+    queueName = config.queueName;
+    maxLoad = config.maxLoad;
+    healthPort = config.healthPort;
+    extraCheckUrls = config.extraCheckUrls;
+    healthCheckTimeoutMs = config.healthCheckTimeoutMs;
+    gitRepoPath = config.gitRepoPath;
+    gitRemote = config.gitRemote;
+    gitBranch = config.gitBranch;
+    discordToken = config.discordToken;
+    discordAppId = config.discordAppId;
+    const workerBaseUrl = config.workerBaseUrl;
+    const worker2BaseUrl = config.worker2BaseUrl;
     workerHealthUrl = new URL("/healthz", workerBaseUrl).toString();
     worker2HealthUrl = new URL("/healthz", worker2BaseUrl).toString();
-    statusCheckTimeoutMs = parseOptionalNumber("STATUS_CHECK_TIMEOUT_MS") ?? 1500;
-    statusCheckRetries = parseOptionalNumber("STATUS_CHECK_RETRIES") ?? 1;
+    statusCheckTimeoutMs = config.statusCheckTimeoutMs ?? 1500;
+    statusCheckRetries = config.statusCheckRetries ?? 1;
     if (isPostgresConfigured()) {
       ensurePostgresConfigValid();
     }

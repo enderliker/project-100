@@ -10,3 +10,5 @@ export * from "./gitAutopull";
 export * from "./logger";
 export * from "./statusCheck";
 export * from "./serviceState";
+export * from "./config";
+export * from "./processHandlers";

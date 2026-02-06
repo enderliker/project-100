@@ -8,6 +8,7 @@ export const COMMAND_NAMES = [
   "calc",
   "clear",
   "coinflip",
+  "config",
   "configcommands",
   "dice",
   "help",

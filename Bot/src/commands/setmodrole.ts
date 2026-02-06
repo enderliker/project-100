@@ -1,56 +1,13 @@
 import { SlashCommandBuilder } from "discord.js";
 import type { CommandDefinition } from "./types";
-import {
-  buildEmbed,
-  hasAdminAccess,
-  requireGuildContext,
-  requirePostgres
-} from "./command-utils";
-import { getGuildConfig, setGuildModrole } from "./storage";
-import { safeDefer, safeEditOrFollowUp, safeRespond } from "../command-handler/interaction-response";
+import { handleSetModRole } from "./config-settings";
 
 export const command: CommandDefinition = {
   data: new SlashCommandBuilder()
     .setName("setmodrole")
-    .setDescription("Sets the moderation role for this server.")
+    .setDescription("Sets the moderation role for this server. (Deprecated: use /config modrole)")
     .addRoleOption((option) =>
       option.setName("role").setDescription("Role to grant moderation access").setRequired(true)
     ),
-  execute: async (interaction, context) => {
-    const guildContext = await requireGuildContext(interaction, context);
-    if (!guildContext) {
-      return;
-    }
-    const pool = requirePostgres(context, (options) => safeRespond(interaction, options));
-    if (!pool) {
-      return;
-    }
-    const config = await getGuildConfig(pool, guildContext.guild.id);
-    if (!hasAdminAccess(guildContext.member, config)) {
-      const embed = buildEmbed(context, {
-        title: "Permission Denied",
-        description: "You do not have permission to update server configuration.",
-        variant: "error"
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
-      return;
-    }
-    const role = interaction.options.getRole("role", true);
-    if (!role) {
-      const embed = buildEmbed(context, {
-        title: "Role Not Found",
-        description: "Please specify a valid role to set as the mod role.",
-        variant: "warning"
-      });
-      await safeRespond(interaction, { embeds: [embed], ephemeral: true });
-      return;
-    }
-    await safeDefer(interaction, { ephemeral: true });
-    await setGuildModrole(pool, guildContext.guild.id, role.id);
-    const embed = buildEmbed(context, {
-      title: "Mod Role Updated",
-      description: `Mod role set to <@&${role.id}>.`
-    });
-    await safeEditOrFollowUp(interaction, { embeds: [embed], ephemeral: true });
-  }
+  execute: handleSetModRole
 };

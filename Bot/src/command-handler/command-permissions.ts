@@ -164,7 +164,7 @@ export async function canUseCommand(
   command: Command,
   context: CommandContext
 ): Promise<CommandPermissionResult> {
-  if (!context.guild || !context.postgresPool) {
+  if (!context.guild) {
     return { ok: true };
   }
 
@@ -174,6 +174,25 @@ export async function canUseCommand(
   const commandName = command.name as CommandName;
   const permissionPolicy = getPermissionPolicy(commandName);
   const isModeration = Boolean(permissionPolicy);
+
+  if (!context.postgresPool) {
+    if (!isModeration) {
+      return { ok: true };
+    }
+    if (!context.member || !context.guild) {
+      return {
+        ok: false,
+        message: "This command can only be used in a server."
+      };
+    }
+    if (hasNativePermissions(permissionPolicy, context)) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      message: "You do not have permission to run this command."
+    };
+  }
 
   const config = await commandConfigStore.getCommandConfig(
     context.postgresPool,
@@ -207,7 +226,7 @@ export async function canUseCommand(
   }
 
   const memberRoleIds = context.member
-    ? new Set(context.member.roles.cache.map((role) => role.id))
+    ? new Set(Array.from(context.member.roles.cache.values()).map((role) => role.id))
     : new Set<string>();
   const hasDeniedRole = normalized.denyRoles.some((roleId) => memberRoleIds.has(roleId));
   if (hasDeniedRole) {

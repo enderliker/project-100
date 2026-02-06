@@ -6,6 +6,7 @@ export interface HealthCheckResult {
   reason?: string;
   latencyMs?: number;
   statusCode?: number;
+  lastError?: string;
 }
 
 export type HealthCheck = () => Promise<HealthCheckResult> | HealthCheckResult;

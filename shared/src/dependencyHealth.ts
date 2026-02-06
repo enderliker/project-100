@@ -5,7 +5,10 @@ import { HealthCheckResult } from "./health";
 async function withTimeout<T>(
   task: Promise<T>,
   timeoutMs: number
-): Promise<{ ok: true; value: T; latencyMs: number } | { ok: false; reason: string }> {
+): Promise<
+  | { ok: true; value: T; latencyMs: number }
+  | { ok: false; reason: string; lastError: string }
+> {
   const start = Date.now();
 
   let timeoutId: NodeJS.Timeout | null = null;
@@ -26,8 +29,21 @@ async function withTimeout<T>(
       clearTimeout(timeoutId);
     }
     const message = error instanceof Error ? error.message : "unknown_error";
-    return { ok: false, reason: message };
+    const reason = message === "timeout" ? "timeout" : "error";
+    return { ok: false, reason, lastError: sanitizeErrorMessage(message) };
   }
+}
+
+function sanitizeErrorMessage(message: string): string {
+  const sensitiveEnv = ["REDIS_PASSWORD", "PG_PASSWORD"];
+  let sanitized = message;
+  for (const name of sensitiveEnv) {
+    const value = process.env[name];
+    if (value) {
+      sanitized = sanitized.split(value).join("***");
+    }
+  }
+  return sanitized;
 }
 
 export async function checkRedisHealth(
@@ -36,7 +52,7 @@ export async function checkRedisHealth(
 ): Promise<HealthCheckResult> {
   const result = await withTimeout(redis.ping(), timeoutMs);
   if (!result.ok) {
-    return { ok: false, reason: result.reason };
+    return { ok: false, reason: result.reason, lastError: result.lastError };
   }
   return { ok: true, latencyMs: result.latencyMs };
 }
@@ -47,7 +63,7 @@ export async function checkPostgresHealth(
 ): Promise<HealthCheckResult> {
   const result = await withTimeout(pool.query("SELECT 1"), timeoutMs);
   if (!result.ok) {
-    return { ok: false, reason: result.reason };
+    return { ok: false, reason: result.reason, lastError: result.lastError };
   }
   return { ok: true, latencyMs: result.latencyMs };
 }

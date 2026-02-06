@@ -6,6 +6,22 @@ import { createLogger } from "./logger";
 
 const execFileAsync = promisify(execFile);
 const logger = createLogger("git");
+const LOG_COOLDOWN_MS = 60_000;
+const logCooldowns = new Map<string, number>();
+
+function logWithCooldown(
+  level: "info" | "warn" | "error",
+  key: string,
+  message: string
+): void {
+  const now = Date.now();
+  const last = logCooldowns.get(key);
+  if (last && now - last < LOG_COOLDOWN_MS) {
+    return;
+  }
+  logCooldowns.set(key, now);
+  logger[level](message);
+}
 
 export interface GitAutopullOptions {
   repoPath: string;
@@ -133,7 +149,7 @@ export async function runGitUpdateOnce(
   options: GitAutopullOptions
 ): Promise<GitAutopullResult> {
   if (updateResult) {
-    logger.warn("update already executed, skipping");
+    logWithCooldown("warn", "update_skipped", "update already executed, skipping");
     return updateResult;
   }
 
