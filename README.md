@@ -1,14 +1,13 @@
 # Project-100 Distributed System
 
 ## Overview
-This monorepo provides a production-ready distributed system with a bot/gateway service and two worker services backed by Redis (TLS) for queueing and PostgreSQL (SSL) for persistence. The runtime is designed for Pterodactyl/Jexactyl and only runs compiled JavaScript from `dist/` after a build step.
+This monorepo provides a production-ready distributed system with a bot/gateway service and one worker service backed by Redis (TLS) for queueing and PostgreSQL (SSL) for persistence. The runtime is designed for Pterodactyl/Jexactyl and only runs compiled JavaScript from `dist/` after a build step.
 
 ## Repository Structure
 ```
 /
 ├─ Bot/
 ├─ worker/
-├─ worker2/
 ├─ shared/
 ├─ scripts/
 ├─ package.json
@@ -30,6 +29,20 @@ This monorepo provides a production-ready distributed system with a bot/gateway 
    ./scripts/entrypoint.sh
    ```
 
+## Contributing
+1. Install dependencies from the repo root:
+   ```bash
+   npm install
+   ```
+2. Build all workspaces:
+   ```bash
+   npm run build
+   ```
+3. Run locally with your chosen service mode:
+   ```bash
+   SERVICE_MODE=bot node run.js
+   ```
+
 The entrypoint script performs the following in strict order:
 1. Loads `.env`
 2. Validates required environment variables (including `DISCORD_TOKEN` and `DISCORD_APP_ID` for `SERVICE_MODE=bot`)
@@ -43,7 +56,6 @@ The entrypoint script performs the following in strict order:
 Set `SERVICE_MODE` in `.env` to one of:
 - `bot`
 - `worker`
-- `worker2`
 
 An invalid or missing value causes the process to exit.
 
@@ -63,7 +75,7 @@ Pterodactyl container.
 ### A) Create `.env` files (one per container)
 1) In the Pterodactyl panel, open **File Manager** for the server/container.
 2) Upload `.env.example` from this repo, rename it to `.env`, then fill in values.
-3) Repeat for each container: main bot, worker1, worker2.
+3) Repeat for each container: main bot, worker1.
 
 **Main bot container `.env` (SERVICE_MODE=bot)** — key variables:
 - Discord:
@@ -77,7 +89,6 @@ Pterodactyl container.
   - `LOG_COMMAND_EVENTS=0` (set to `1` to log per-command events)
 - Worker URLs:
   - `WORKER1_URL=http://zac.hidencloud.com:24661`
-  - `WORKER2_URL=http://june.hidencloud.com:25230`
 - Redis (AWS TLS + auth):
   - `REDIS_HOST=your-redis-host`
   - `REDIS_PORT=6379`
@@ -104,15 +115,6 @@ Pterodactyl container.
 - `BOT_HEALTH_URL=http://<bot-host>:<bot-health-port>/healthz`
 - Same Redis + Postgres variables as above.
 
-**Worker2 container `.env` (SERVICE_MODE=worker2)** — key variables:
-- `HEALTH_PORT=3001` (or any allocated port for this container)
-- `WORKER2_QUEUE_NAME=jobs:worker2`
-- `WORKER2_DEAD_LETTER_QUEUE=jobs:dead-letter`
-- `WORKER2_MAX_ATTEMPTS=5`
-- `WORKER2_IDEMPOTENCY_TTL_SEC=86400`
-- `WORKER2_BACKOFF_BASE_MS=500`
-- `BOT_HEALTH_URL=http://<bot-host>:<bot-health-port>/healthz`
-- Same Redis + Postgres variables as above.
 
 ### B) Pterodactyl panel steps (ports + binding)
 1) **Allocations**: add two allocations for the bot container: one for `HTTP_PORT` and one for `HEALTH_PORT`.
@@ -136,20 +138,21 @@ curl -s http://<panel-domain-or-ip>:<allocation>/readyz
 **Worker checks:**
 ```bash
 curl -s http://zac.hidencloud.com:24661/healthz
-curl -s http://june.hidencloud.com:25230/healthz
 ```
 
-### D) Handling `workers_down` / `partial_workers`
-The main bot marks itself degraded when it cannot reach either worker’s `GET /healthz`
+### D) Handling `worker_down`
+The main bot marks itself degraded when it cannot reach the worker’s `GET /healthz`
 endpoint (HTTP 200 + JSON with `"ok": true`). To resolve:
-1) Ensure each worker container is running with the correct `SERVICE_MODE` (`worker` or `worker2`).
+1) Ensure each worker container is running with the correct `SERVICE_MODE` (`worker`).
 2) Confirm the worker’s health server is listening on the `HEALTH_PORT` allocation.
 3) Verify the worker responds to `curl http://<worker-host>:<worker-health-port>/healthz`.
-4) Update `WORKER1_URL` / `WORKER2_URL` in the bot’s `.env` if the worker URL changed.
+4) Update `WORKER1_URL` in the bot’s `.env` if the worker URL changed.
 
 ## Scripts
 - `npm run build` — Builds all workspaces using TypeScript project references.
+- `npm run verify:commands` — Ensures Bot command outputs exist after build.
 - `./scripts/entrypoint.sh` — Production entrypoint with full startup flow.
+- `node run.js` — Local entrypoint that performs install/build and starts a service.
 
 ## Security Notes
 - Redis connections require TLS and a CA certificate.

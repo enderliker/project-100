@@ -209,7 +209,6 @@ function deriveBotState(
   const redisOk = checks.redis?.ok ?? false;
   const postgresOk = checks.postgres?.ok ?? true;
   const workerOk = checks.worker?.ok ?? false;
-  const worker2Ok = checks.worker2?.ok ?? false;
 
   if (!redisOk) {
     serviceState.setState("ERROR", "redis_unreachable");
@@ -221,9 +220,9 @@ function deriveBotState(
     return;
   }
 
-  if (!workerOk || !worker2Ok) {
-    const detail = `worker=${workerOk ? "up" : "down"} worker2=${worker2Ok ? "up" : "down"}`;
-    serviceState.setState("DEGRADED", `workers_unreachable ${detail}`);
+  if (!workerOk) {
+    const detail = `worker=${workerOk ? "up" : "down"}`;
+    serviceState.setState("DEGRADED", `worker_unreachable ${detail}`);
     return;
   }
 
@@ -246,7 +245,6 @@ async function main(): Promise<void> {
   let discordToken: string;
   let discordAppId: string;
   let workerHealthUrl: string;
-  let worker2HealthUrl: string;
   let statusCheckTimeoutMs: number;
   let statusCheckRetries: number;
   let healthCheckTimeoutMs: number;
@@ -333,11 +331,6 @@ async function main(): Promise<void> {
         parse: envParsers.url(),
         required: true
       },
-      worker2BaseUrl: {
-        name: "WORKER2_URL",
-        parse: envParsers.url(),
-        required: true
-      },
       statusCheckTimeoutMs: {
         name: "STATUS_CHECK_TIMEOUT_MS",
         parse: envParsers.optionalPositiveNumber(),
@@ -366,9 +359,7 @@ async function main(): Promise<void> {
     discordToken = config.discordToken;
     discordAppId = config.discordAppId;
     const workerBaseUrl = config.workerBaseUrl;
-    const worker2BaseUrl = config.worker2BaseUrl;
     workerHealthUrl = new URL("/healthz", workerBaseUrl).toString();
-    worker2HealthUrl = new URL("/healthz", worker2BaseUrl).toString();
     statusCheckTimeoutMs = config.statusCheckTimeoutMs ?? 1500;
     statusCheckRetries = config.statusCheckRetries ?? 1;
     if (isPostgresConfigured()) {
@@ -413,28 +404,19 @@ async function main(): Promise<void> {
   };
 
   try {
-    const [workerCheck, worker2Check] = await Promise.all([
-      checkRemoteService(workerHealthUrl, statusOptions),
-      checkRemoteService(worker2HealthUrl, statusOptions)
-    ]);
-    if (workerCheck.status !== "up" && worker2Check.status !== "up") {
+    const workerCheck = await checkRemoteService(workerHealthUrl, statusOptions);
+    if (workerCheck.status !== "up") {
       serviceState.setState(
         "DEGRADED",
-        `workers_down: worker=${summarizeRemoteCheck(workerCheck)} worker2=${summarizeRemoteCheck(worker2Check)}`
+        `worker_down: worker=${summarizeRemoteCheck(workerCheck)}`
       );
-      startupLogger.warn("event=dependency_check result=degraded reason=workers_down");
-    } else if (workerCheck.status !== "up" || worker2Check.status !== "up") {
-      serviceState.setState(
-        "DEGRADED",
-        `partial_workers: worker=${summarizeRemoteCheck(workerCheck)} worker2=${summarizeRemoteCheck(worker2Check)}`
-      );
-      startupLogger.warn("event=dependency_check result=degraded reason=partial_workers");
+      startupLogger.warn("event=dependency_check result=degraded reason=worker_down");
     } else {
       serviceState.setState("READY");
       startupLogger.info("event=dependency_check result=ready");
     }
   } catch (error) {
-    serviceState.setState("DEGRADED", "workers_check_failed");
+    serviceState.setState("DEGRADED", "worker_check_failed");
     startupLogger.warn("event=dependency_check result=degraded reason=check_failed");
   }
 
@@ -542,18 +524,6 @@ async function main(): Promise<void> {
           statusCode: result.statusCode
         };
       },
-      worker2: async () => {
-        const result = await checkRemoteService(worker2HealthUrl, {
-          timeoutMs: healthCheckTimeoutMs,
-          retries: 1
-        });
-        return {
-          ok: result.status === "up",
-          reason: result.reason,
-          latencyMs: result.latencyMs,
-          statusCode: result.statusCode
-        };
-      },
       ...Object.fromEntries(
         extraCheckUrls.map((url, index) => [
           `external_${index + 1}`,
@@ -637,7 +607,6 @@ async function main(): Promise<void> {
     client,
     gitRepoPath,
     workerHealthUrl,
-    worker2HealthUrl,
     statusCheckTimeoutMs,
     statusCheckRetries,
     redis,

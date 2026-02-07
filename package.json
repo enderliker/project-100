@@ -4,7 +4,6 @@
   "workspaces": [
     "Bot",
     "worker",
-    "worker2",
     "shared"
   ],
   "scripts": {
@@ -17,7 +16,6 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.9",
-    "@types/pg": "^8.11.6",
     "typescript": "^5.4.5"
   }
 }

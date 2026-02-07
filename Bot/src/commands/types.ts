@@ -12,7 +12,6 @@ export interface CommandExecutionContext {
   client: Client;
   gitRepoPath: string;
   workerHealthUrl: string | null;
-  worker2HealthUrl: string | null;
   statusCheckTimeoutMs: number;
   statusCheckRetries: number;
   redis: RedisClient;

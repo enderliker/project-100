@@ -7,7 +7,6 @@ import { buildBaseEmbed, EmbedContext } from "./embeds";
 
 export interface StatusCheckConfig {
   workerUrl?: string;
-  worker2Url?: string;
   timeoutMs: number;
   retries: number;
 }
@@ -22,7 +21,6 @@ export interface StatusDependencies {
 
 export interface StatusSnapshot {
   worker?: RemoteServiceCheckResult;
-  worker2?: RemoteServiceCheckResult;
 }
 
 export async function fetchStatusSnapshot(
@@ -36,12 +34,9 @@ export async function fetchStatusSnapshot(
   const workerPromise = config.workerUrl
     ? checkRemoteService(config.workerUrl, options)
     : Promise.resolve(undefined);
-  const worker2Promise = config.worker2Url
-    ? checkRemoteService(config.worker2Url, options)
-    : Promise.resolve(undefined);
-  const [worker, worker2] = await Promise.all([workerPromise, worker2Promise]);
+  const worker = await workerPromise;
 
-  return { worker, worker2 };
+  return { worker };
 }
 
 function formatLatency(result?: RemoteServiceCheckResult): string {
@@ -106,11 +101,6 @@ export function buildStatusEmbed(
     {
       name: "Worker",
       value: formatServiceValue(snapshot.worker),
-      inline: true
-    },
-    {
-      name: "Worker2",
-      value: formatServiceValue(snapshot.worker2),
       inline: true
     },
     {
