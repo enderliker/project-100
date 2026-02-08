@@ -11,7 +11,6 @@ export const command: CommandDefinition = {
   execute: async (interaction, context) => {
     const snapshot = await fetchStatusSnapshot({
       workerUrl: context.workerHealthUrl ?? undefined,
-      worker2Url: context.worker2HealthUrl ?? undefined,
       timeoutMs: context.statusCheckTimeoutMs,
       retries: context.statusCheckRetries
     });

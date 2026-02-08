@@ -3,8 +3,6 @@
   "references": [
     { "path": "./shared" },
     { "path": "./Bot" },
-    { "path": "./worker" },
-    { "path": "./worker2" }
-  ],
-  "exclude": ["node_modules", "dist", "**/dist"]
+    { "path": "./worker" }
+  ]
 }

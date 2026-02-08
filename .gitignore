@@ -3,3 +3,6 @@ node_modules/
 dist/
 **/dist/
 *.tsbuildinfo
+build/
+coverage/
+.DS_Store

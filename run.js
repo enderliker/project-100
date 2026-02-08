@@ -6,7 +6,7 @@ const dotenv = require("dotenv");
 
 const LOG_PREFIX = "[entrypoint]";
 const ROOT_DIR = process.cwd();
-const SERVICE_MODES = new Set(["bot", "worker", "worker2"]);
+const SERVICE_MODES = new Set(["bot", "worker"]);
 const SENSITIVE_ENV = ["DISCORD_TOKEN", "REDIS_PASSWORD", "PG_PASSWORD"];
 
 const log = (message) => {
@@ -218,7 +218,7 @@ const runService = async (serviceMode) => {
 const validateServiceMode = () => {
   const mode = process.env.SERVICE_MODE;
   if (!SERVICE_MODES.has(mode)) {
-    logError("SERVICE_MODE must be one of: bot, worker, worker2.");
+    logError("SERVICE_MODE must be one of: bot, worker.");
     process.exit(1);
   }
   return mode;
